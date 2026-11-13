@@ -13,6 +13,8 @@ department's class list, so the system knows exactly **who owes what**, who has
 paid, and who has not — instead of only counting students who happened to
 register.
 
+> **Deploying for the first time?** Follow [`docs/DEPLOY_GUIDE_BEGINNER.md`](docs/DEPLOY_GUIDE_BEGINNER.md) — step by step, no coding.
+>
 > **Production-readiness status, open blockers and deploy options:** [`docs/ENGINEERING_REPORT.md`](docs/ENGINEERING_REPORT.md)
 
 ## Repository layout
