@@ -23,9 +23,9 @@ def _visible_contributions(user):
     """
     qs = Contribution.objects.select_related('department', 'created_by').all()
     if user.graduated_at:
-        # A graduate keeps their payment history and receipts (served by the
-        # payments app) but has no fees to see or pay any more.
-        return qs.none()
+        # A graduate is billed nothing new, but debts carried over from
+        # their time as a student still follow them.
+        return qs.filter(carried_over=True, debts__student=user).distinct()
     if user.department_id:
         qs = qs.filter(department_id=user.department_id)
     elif not (user.is_staff or user.is_superuser):
@@ -75,14 +75,11 @@ class ContributionListCreateView(generics.ListCreateAPIView):
         qs = _visible_contributions(self.request.user)
 
         if self.request.method == 'GET' and self.request.user.role == User.ROLE_STUDENT:
-            # Students only see fees still open, and only their level.
-            qs = qs.filter(Contribution.open_q())
-            if self.request.user.level:
-                qs = qs.filter(
-                    Q(target_level__isnull=True) | Q(target_level=self.request.user.level)
-                )
-            else:
-                qs = qs.filter(target_level__isnull=True)
+            # This session's open fees for their level, plus any unpaid
+            # dues carried over from earlier sessions.
+            return Contribution.payable_by(self.request.user).select_related(
+                'department', 'created_by'
+            )
 
         if (
             self.request.method == 'GET'
@@ -176,6 +173,12 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
         user = self.request.user
         fee = serializer.instance
         new = serializer.validated_data
+        if fee.carried_over:
+            # A past session's fee is a frozen record. Reopening or editing
+            # it would bill the class that has since moved into that level.
+            raise serializers.ValidationError({
+                'non_field_errors': 'This fee belongs to a past session and can no longer be changed.'
+            })
         is_admin = user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser
 
         # Once anyone has paid (or has a payment in flight), the price and the
@@ -317,7 +320,15 @@ class ContributionPaymentsView(APIView):
         # Level-targeted fees too: marking a student who does not owe this fee
         # would bank a success row we then count as collected, inflating the
         # totals with money that was never due.
-        if (
+        if contribution.carried_over:
+            # A past session's fee: the question is whether THIS student was
+            # recorded as owing it, not which level they are in today.
+            if not contribution.debts.filter(student=student).exists():
+                return Response(
+                    {'error': 'bad_request', 'message': 'That student does not owe this carried-over fee.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif (
             contribution.target_level
             and student.level != contribution.target_level
         ):

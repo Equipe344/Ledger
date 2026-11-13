@@ -1,7 +1,7 @@
 # Departmental Payment/Contribution System
 
 **Team Visionary Coders** — NACOS National Build Challenge
-**Status:** all modules complete · **277 backend tests passing** · frontend builds clean
+**Status:** all modules complete · **284 backend tests passing** · frontend builds clean
 
 A full-stack solution: a **Django + DRF API** (`backend/`) and a **React + Vite
 app** (`frontend/`). Departments create contributions (dues, event fees, shirts,
@@ -422,13 +422,13 @@ reconciled in `API_CONTRACT.md` first, never patched silently.
 
 ```bash
 cd backend
-python manage.py test            # full suite — 277 tests
+python manage.py test            # full suite — 284 tests
 python manage.py check           # system check
 python manage.py makemigrations --check --dry-run   # model drift check
 python db_backup.py              # snapshot db.sqlite3 -> backups/ (downloadable)
 ```
 
-**277 tests**, split by concern:
+**284 tests**, split by concern:
 
 | App | Focus |
 |---|---|

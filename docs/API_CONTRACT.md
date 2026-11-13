@@ -238,7 +238,9 @@ student registration (required `department_id`), and made roster imports fail on
 ```
 `has_paid` is computed per the logged-in student so the frontend doesn't have to.
 `target_level: null` means it applies to every level; otherwise a value like `"400"`
-means only that level sees/owes it. `is_closed` lets reps/admins render closed fees
+means only that level sees/owes it. `carried_over` (read-only) is `true` for a fee
+from a past session: a student only ever sees one of those if they still owe it.
+`is_closed` lets reps/admins render closed fees
 greyed-out with a "reopen" action — students never receive closed fees at all.
 
 **`department` (name) + `department_id` are returned on EVERY contribution row**

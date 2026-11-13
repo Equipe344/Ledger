@@ -87,12 +87,18 @@ def start_session(name, started_by, dry_run=False):
     class. Every still-open fee is closed, so last session's level-targeted
     fees can never bill the class that has just moved into that level.
 
+    Unpaid dues are not forgiven: for every MANDATORY fee, each student who
+    still owes it gets a Debt row before anyone is moved. That debt follows
+    the student into every later session, and past graduation, until an
+    ordinary payment settles it. Optional fees simply close.
+
     Students with no department or level on file are left untouched and
     counted, so an admin can fix them. Returns the counts; with dry_run
     nothing is written.
     """
     # Imported here: contributions already imports users (no import cycle at load).
-    from apps.contributions.models import Contribution
+    from apps.contributions.models import Contribution, Debt
+    from apps.payments.models import Payment
 
     name = (name or '').strip()
     if not name:
@@ -111,6 +117,26 @@ def start_session(name, started_by, dry_run=False):
         'fees_closed': Contribution.objects.filter(is_closed=False).count(),
     }
     now = timezone.now()
+
+    # Record who still owes what BEFORE any level changes, while each fee's
+    # class list is still the class it was raised for.
+    ending = list(Contribution.objects.filter(is_mandatory=True, carried_over=False))
+    debts = []
+    for fee in ending:
+        paid = Payment.objects.filter(
+            contribution=fee, status=Payment.STATUS_SUCCESS
+        ).values_list('student_id', flat=True)
+        debts += [
+            Debt(contribution=fee, student_id=student_id)
+            for student_id in fee.eligible_students()
+            .exclude(pk__in=paid).values_list('pk', flat=True)
+        ]
+    counts['debts_carried'] = len(debts)
+    if not dry_run:
+        Debt.objects.bulk_create(debts)
+        Contribution.objects.filter(pk__in=[fee.pk for fee in ending]).update(
+            carried_over=True, is_closed=True
+        )
 
     for department in Department.objects.all():
         if department.final_level not in _LEVELS:

@@ -163,17 +163,11 @@ def _open_contribution_for(user, contribution_id):
     """
     The fee this student may pay right now, or None.
 
-    Scoped exactly like the contributions list (own department + level, still
-    open) so a stale id can never be used to pay into a closed collection.
+    The same rule as the student fee list (`Contribution.payable_by`): this
+    session's open fees for their class, plus dues carried over from earlier
+    sessions. A stale id can never be used to pay into a closed collection.
     """
-    if user.graduated_at:
-        return None  # graduates are no longer billed
-    return (
-        Contribution.objects.filter(id=contribution_id, department=user.department)
-        .filter(Contribution.open_q())
-        .filter(Q(target_level__isnull=True) | Q(target_level=user.level))
-        .first()
-    )
+    return Contribution.payable_by(user).filter(id=contribution_id).first()
 
 
 def _has_paid(user, contribution):

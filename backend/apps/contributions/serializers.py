@@ -46,12 +46,13 @@ class ContributionSerializer(serializers.ModelSerializer):
             'is_mandatory',
             'target_level',
             'is_closed',
+            'carried_over',
             'has_paid',
             'department',
             'department_id',
             'created_at',
         ]
-        read_only_fields = ['id', 'has_paid', 'department', 'created_at']
+        read_only_fields = ['id', 'carried_over', 'has_paid', 'department', 'created_at']
         extra_kwargs = {
             'description': {'required': False},
         }

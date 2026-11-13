@@ -234,6 +234,109 @@ class NewSessionTests(LifecycleBase):
         self.assertNotIn(self.finalist, new_fee.eligible_students())
 
 
+class CarriedDebtTests(LifecycleBase):
+    """Unpaid mandatory dues follow the student into every later session."""
+
+    def setUp(self):
+        super().setUp()
+        self.dues = self._fee(level='100', title='100L dues')   # fresher owes it
+        self.shirt = Contribution.objects.create(
+            department=self.department, created_by=self.admin, title='Shirt',
+            amount=Decimal('3000.00'), is_mandatory=False,
+            deadline=timezone.now() + timedelta(days=30),
+        )
+        self.newcomer_dues = None
+
+    def _start(self, name='2026/2027'):
+        self._as(self.admin)
+        return self.client.post('/api/auth/sessions/', {'name': name})
+
+    def _pay(self, student, fee, reference):
+        return Payment.objects.create(
+            student=student, contribution=fee, amount=fee.amount,
+            payment_type=Payment.PAYMENT_CONTRIBUTION, reference=reference,
+            status=Payment.STATUS_SUCCESS,
+        )
+
+    def _titles(self, user):
+        self._as(user)
+        return sorted(row['title'] for row in self.client.get('/api/contributions/').data)
+
+    def test_unpaid_mandatory_dues_follow_the_student_up_a_level(self):
+        response = self._start()
+        self.assertEqual(response.data['debts_carried'], 1)   # the optional shirt is not a debt
+        self.fresher.refresh_from_db()
+        self.assertEqual(self.fresher.level, '200')
+        # Still owed, still visible, flagged as carried over — and payable.
+        self._as(self.fresher)
+        rows = self.client.get('/api/contributions/').data
+        self.assertEqual(
+            [(r['title'], r['carried_over'], r['has_paid']) for r in rows],
+            [('100L dues', True, False)],
+        )
+        submit = self.client.post(
+            '/api/payments/submit/',
+            {'contribution_id': self.dues.id, 'channel': 'cash'},
+            format='multipart',
+        )
+        self.assertEqual(submit.status_code, 201)
+
+    def test_a_student_who_paid_carries_no_debt(self):
+        self._pay(self.fresher, self.dues, 'REF-PAID')
+        self.assertEqual(self._start().data['debts_carried'], 0)
+        self.assertEqual(self._titles(self.fresher), [])
+
+    def test_the_new_class_is_not_billed_for_last_sessions_fee(self):
+        self._start()
+        newcomer = self._user('newcomer', 'PHY/111', level='100')
+        self.assertEqual(self._titles(newcomer), [])
+        self._as(newcomer)
+        self.assertEqual(
+            self.client.post('/api/payments/initiate/', {'contribution_id': self.dues.id}).status_code,
+            404,
+        )
+
+    def test_debt_survives_a_second_session_and_graduation(self):
+        final_dues = self._fee(level='400', title='Final dues')   # finalist owes it
+        self._start('2026/2027')
+        self._start('2027/2028')
+        self.finalist.refresh_from_db()
+        self.assertIsNotNone(self.finalist.graduated_at)
+        self.assertEqual(self._titles(self.finalist), ['Final dues'])
+        # Recorded once, not once per session.
+        self.assertEqual(final_dues.debts.filter(student=self.finalist).count(), 1)
+
+    def test_roster_of_a_past_fee_still_shows_who_owed_and_who_paid(self):
+        payer = self._user('payer', 'PHY/102', level='100')
+        self._pay(payer, self.dues, 'REF-PAYER')
+        self._start()
+        self.dues.refresh_from_db()
+        self.assertEqual(set(self.dues.eligible_students()), {self.fresher, payer})
+        self.assertEqual(self.dues.outstanding_count(), 1)
+        self.assertEqual(self.dues.total_expected(), Decimal('10000.00'))
+
+    def test_settling_a_carried_debt_offline_and_the_guards_around_it(self):
+        self._start()
+        self._as(self.executive)
+        url = f'/api/contributions/{self.dues.id}/payments/'
+        # Someone who never owed it cannot be marked paid on it.
+        wrong = self.client.post(url, {'matric_number': 'PHY/303', 'receipt_reference': 'T-1'})
+        self.assertEqual(wrong.status_code, 400)
+        right = self.client.post(url, {'matric_number': 'PHY/101', 'receipt_reference': 'T-2'})
+        self.assertEqual(right.status_code, 201)
+        self.assertEqual(self._titles(self.fresher), ['100L dues'])
+        self._as(self.fresher)
+        self.assertTrue(self.client.get('/api/contributions/').data[0]['has_paid'])
+
+    def test_a_past_sessions_fee_cannot_be_reopened_or_edited(self):
+        self._start()
+        self._as(self.admin)
+        response = self.client.patch(
+            f'/api/contributions/{self.dues.id}/', {'is_closed': False}, format='json'
+        )
+        self.assertEqual(response.status_code, 400)
+
+
 class AccountSafetyTests(LifecycleBase):
 
     def _import(self, rows):

@@ -415,7 +415,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             set(response.data.keys()),
             {
                 'id', 'title', 'description', 'amount', 'deadline',
-                'is_mandatory', 'target_level', 'is_closed', 'has_paid',
+                'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'has_paid',
                 'created_at', 'department', 'department_id',
             },
         )
@@ -450,7 +450,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             set(contribution.keys()),
             {
                 'id', 'title', 'description', 'amount', 'deadline',
-                'is_mandatory', 'target_level', 'is_closed', 'has_paid',
+                'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'has_paid',
                 'created_at', 'department', 'department_id',
             },
         )

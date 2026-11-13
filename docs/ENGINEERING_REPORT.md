@@ -27,7 +27,7 @@ No technology was added or replaced in this pass.
 
 | Check | Before | After |
 |---|---|---|
-| Backend tests | 283 pass (3 skipped) | 277 pass (0 skipped) — 43 BMONI tests removed, 37 added |
+| Backend tests | 283 pass (3 skipped) | 284 pass (0 skipped) — 43 BMONI tests removed, 44 added |
 | Migration drift | none | none |
 | `manage.py check --deploy` (real-length key) | not run | clean |
 | Frontend production build | not run | builds |
@@ -179,16 +179,24 @@ also appoint or remove an office holder with `set-role`.
 - Students at their department's `final_level` (default 400) graduate.
 - A graduating office holder loses the office (audited).
 - Every open fee is closed, so last session's fees cannot bill the new class.
+- **Unpaid mandatory dues are carried over.** Before anyone moves, each
+  student who still owes a mandatory fee gets a `Debt` row. The fee stays
+  visible and payable for that student in every later session and after
+  graduation, until an ordinary payment (online, offline proof, or a
+  mark-paid by an executive/admin) settles it. Optional fees just close.
+- A past session's fee is frozen: its roster is the recorded debtors plus
+  whoever paid, and it cannot be edited or reopened.
 - A session name can be started once only; `dry_run` reports the counts first.
 
-**Graduates** keep their login, payment history and receipts. They see no
-fees, cannot start a payment and are not counted as owing anything.
+**Graduates** keep their login, payment history and receipts. They are
+billed nothing new, but still see and can pay any debt carried over from
+their time as a student.
 
 ### What this does not do yet
-- **Outstanding debt is not carried over.** Closing a fee keeps every payment
-  record, but "who had not paid" for a closed fee is computed from the current
-  class list, which has moved on. Export the outstanding list for each fee
-  **before** starting a session.
+- A carried-over fee can be marked paid by an executive or admin; a class rep
+  is only matched to it if their level equals the fee's original level.
+- There is no way to write off or waive a debt yet; that is an admin
+  decision to design with the department.
 - `Department.final_level` can only be changed in the Django admin.
 - A handover cannot be undone by the old holder; an admin reverses it.
 - There is no screen listing `RoleChange` history; it is in the Django admin
