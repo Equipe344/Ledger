@@ -1,6 +1,15 @@
 from rest_framework import serializers
 
-from .models import DepartmentBMONIWallet, Payment
+from rest_framework.reverse import reverse
+
+from .models import Payment
+
+
+def proof_url(payment, request):
+    """URL of the authenticated proof endpoint (never a public media URL)."""
+    if not payment.proof:
+        return None
+    return reverse('payment-proof', args=[payment.pk], request=request)
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -54,12 +63,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         return obj.updated_at if obj.status == Payment.STATUS_SUCCESS else None
 
     def get_proof_url(self, obj):
-        """Absolute URL to the uploaded proof, or None. Local/dev only."""
-        if not obj.proof:
-            return None
-        request = self.context.get('request')
-        url = obj.proof.url
-        return request.build_absolute_uri(url) if request else url
+        return proof_url(obj, self.context.get('request'))
 
     def validate_payment_type(self, value):
         valid_types = [
@@ -149,38 +153,6 @@ class UnverifiedPaymentSerializer(serializers.ModelSerializer):
         return 'Amount matches; flagged for other reason.'
 
 
-class DepartmentBankAccountSerializer(serializers.ModelSerializer):
-    """
-    The account a department's contributors pay into (BMONI Embedded).
-
-    Read-only by construction: every field is BMONI's own, so there is no way to
-    make the API report an account number BMONI did not issue. The account
-    number is an ordinary 10-digit NUBAN that a student types into their banking
-    app — a public address for money, not a secret.
-    """
-
-    class Meta:
-        model = DepartmentBMONIWallet
-        fields = [
-            'account_name',
-            'account_number',
-            'bank_name',
-            'bank_code',
-            'currency',
-            'status',
-            'provisioned_at',
-        ]
-        read_only_fields = [
-            'account_name',
-            'account_number',
-            'bank_name',
-            'bank_code',
-            'currency',
-            'status',
-            'provisioned_at',
-        ]
-
-
 class PendingPaymentSerializer(serializers.ModelSerializer):
     """
     Admin/rep queue for self-reported offline payments awaiting review
@@ -219,8 +191,4 @@ class PendingPaymentSerializer(serializers.ModelSerializer):
         return obj.student.get_full_name() or obj.student.username
 
     def get_proof_url(self, obj):
-        if not obj.proof:
-            return None
-        request = self.context.get('request')
-        url = obj.proof.url
-        return request.build_absolute_uri(url) if request else url
+        return proof_url(obj, self.context.get('request'))

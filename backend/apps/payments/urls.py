@@ -7,8 +7,7 @@ from .views import (
     PaymentDetailView,
     PaystackWebhookView,
     UnverifiedPaymentsView,
-    DepartmentBankAccountView,
-    BMONIWebhookView,
+    PaymentProofView,
     SubmitOfflinePaymentView,
     PendingPaymentsView,
     ReviewPaymentView,
@@ -27,14 +26,5 @@ urlpatterns = [
     path('submit/', SubmitOfflinePaymentView.as_view(), name='payment-submit'),
     path('pending/', PendingPaymentsView.as_view(), name='payment-pending'),
     path('<int:pk>/review/', ReviewPaymentView.as_view(), name='payment-review'),
-
-    # BMONI Embedded: the department's own NGN account, plus BMONI's callbacks.
-    # Declared after the Paystack routes so the literal prefixes above can never
-    # be shadowed by a future `<int:pk>`-style pattern.
-    path(
-        'departments/<int:pk>/bank-account/',
-        DepartmentBankAccountView.as_view(),
-        name='department-bank-account',
-    ),
-    path('bmoni/webhook/', BMONIWebhookView.as_view(), name='bmoni-webhook'),
+    path('<int:pk>/proof/', PaymentProofView.as_view(), name='payment-proof'),
 ]

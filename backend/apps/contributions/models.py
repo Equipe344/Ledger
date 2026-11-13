@@ -23,7 +23,7 @@ class Contribution(models.Model):
 
     department = models.ForeignKey(
         Department,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,  # a department with fees cannot be deleted
         related_name='contributions',
     )
     created_by = models.ForeignKey(
@@ -89,12 +89,14 @@ class Contribution(models.Model):
     def eligible_students(self):
         """Users who owe/see this contribution (department + level + role).
 
-        Class reps ARE students and still pay dues; only admins/staff are
-        exempt (owner decision, 2026-09-16).
+        Class reps and executives ARE students and still pay dues; only
+        admins/staff are exempt (owner decision, 2026-09-16). Graduates are
+        no longer billed.
         """
         qs = User.objects.filter(
             department=self.department,
-            role__in=[User.ROLE_STUDENT, User.ROLE_CLASS_REP],
+            role__in=User.DUES_PAYING_ROLES,
+            graduated_at__isnull=True,
         )
         if self.target_level:
             qs = qs.filter(level=self.target_level)

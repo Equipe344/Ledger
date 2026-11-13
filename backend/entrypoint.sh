@@ -7,6 +7,8 @@ set -e
 
 echo "Applying database migrations..."
 python manage.py migrate --noinput
+# Shared rate-limit counters live in this table (idempotent).
+python manage.py createcachetable
 
 echo "Collecting static files..."
 python manage.py collectstatic --noinput

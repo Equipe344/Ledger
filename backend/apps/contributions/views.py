@@ -22,6 +22,10 @@ def _visible_contributions(user):
     choke point that prevents cross-department IDOR on detail/summary/payments.
     """
     qs = Contribution.objects.select_related('department', 'created_by').all()
+    if user.graduated_at:
+        # A graduate keeps their payment history and receipts (served by the
+        # payments app) but has no fees to see or pay any more.
+        return qs.none()
     if user.department_id:
         qs = qs.filter(department_id=user.department_id)
     elif not (user.is_staff or user.is_superuser):
@@ -170,10 +174,42 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
         fixed at creation and only a system admin may change it.
         """
         user = self.request.user
-        if user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser:
+        fee = serializer.instance
+        new = serializer.validated_data
+        is_admin = user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser
+
+        # Once anyone has paid (or has a payment in flight), the price and the
+        # audience are frozen. Otherwise a fee could be dropped to a token
+        # amount, paid, and raised again — leaving a genuine "paid" record for
+        # money that was never collected. Close it and create a new fee instead.
+        money_terms_changed = (
+            new.get('amount', fee.amount) != fee.amount
+            or new.get('target_level', fee.target_level) != fee.target_level
+            or new.get('department', fee.department) != fee.department
+        )
+        if money_terms_changed and fee.payments.exclude(status='failed').exists():
+            raise serializers.ValidationError({
+                'non_field_errors': (
+                    'This fee already has payments, so its amount, level and '
+                    'department are locked. Close it and create a new fee.'
+                )
+            })
+
+        if is_admin:
             serializer.save()
-        else:
-            serializer.save(department=serializer.instance.department)
+            return
+        # A class rep keeps a fee inside their own level; an executive may
+        # target any level. Neither can move it to another department.
+        if (
+            user.role == User.ROLE_CLASS_REP
+            and new.get('target_level')
+            and user.level
+            and new['target_level'] != user.level
+        ):
+            raise serializers.ValidationError(
+                {'target_level': 'You can only target your own level.'}
+            )
+        serializer.save(department=fee.department)
 
     def destroy(self, request, *args, **kwargs):
         # Same level gate for close/reopen: closing another level's fee (or

@@ -11,6 +11,9 @@ class IsAdminUser(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
-        if not (user and user.is_authenticated):
-            return False
-        return user.role == 'admin' or user.is_staff or user.is_superuser
+        return bool(user and user.is_authenticated and is_admin(user))
+
+
+def is_admin(user):
+    """The single definition of 'admin': the role, or Django staff/superuser."""
+    return user.role == 'admin' or user.is_staff or user.is_superuser

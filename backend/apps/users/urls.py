@@ -13,6 +13,8 @@ from .views import (
     ResetPasswordView,
     SetUserRoleView,
     UserListView,
+    HandoverView,
+    SessionView,
 )
 
 urlpatterns = [
@@ -43,4 +45,9 @@ urlpatterns = [
     # Admin-only user lookup for the role-management screen (search by
     # matric/username/name) — resolves a matric number to a user id.
     path('auth/users/', UserListView.as_view(), name='auth-users-list'),
+
+    # Office handover (rep/executive -> another student) and the admin-only
+    # new-session rollover (promote, graduate, close last session's fees).
+    path('auth/handover/', HandoverView.as_view(), name='auth-handover'),
+    path('auth/sessions/', SessionView.as_view(), name='auth-sessions'),
 ]

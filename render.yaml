@@ -11,7 +11,7 @@ services:
     # available there). migrate is idempotent, so re-running it on every
     # build is safe. On a paid plan this can move back to preDeployCommand
     # so the schema applies strictly before the new version serves traffic.
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py seed_admin
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py createcachetable && python manage.py seed_admin
     startCommand: gunicorn core.wsgi:application --bind 0.0.0.0:$PORT --workers 2
     healthCheckPath: /api/health/
     envVars:
@@ -40,6 +40,16 @@ services:
       # Set to the Vercel URL, e.g. https://your-app.vercel.app (no slash).
       - key: FRONTEND_URL
         sync: false
+      # Sign-up is closed in production: students claim the account the
+      # roster import created for them. Set to "True" only for an open demo.
+      - key: ALLOW_SELF_REGISTRATION
+        value: "False"
+      # Payment proofs must outlive a redeploy. On a paid plan attach a
+      # persistent disk and set MEDIA_ROOT to its mount path (e.g.
+      # /var/data/media). On the free plan the disk is wiped on every deploy,
+      # which is acceptable for a demo only.
+      - key: MEDIA_ROOT
+        sync: false
       # --- First-admin bootstrap (free web services have no shell) ---------
       # The build runs `python manage.py seed_admin`, which creates (or
       # repairs) one admin from these values. Set ADMIN_PASSWORD before the
@@ -59,20 +69,6 @@ services:
         value: Computer Science
       - key: ADMIN_FACULTY
         value: Physical Sciences
-      # --- BMONI embedded banking (optional) -------------------------------
-      # Leaving BMONI_API_KEY blank keeps the feature switched OFF: the
-      # per-department bank-account endpoints answer 503 rather than inventing
-      # an account. Nothing else in the app depends on it, so a missing
-      # partner key can never block the deploy.
-      # Walkthrough: docs/BMONI_SANDBOX_RUNBOOK.md
-      - key: BMONI_API_KEY
-        sync: false                  # our own partner key, once BMONI issues it
-      - key: BMONI_BASE_URL
-        value: https://embedded-dev.bmoni.com    # sandbox; production host is embedded.bmoni.com
-      # Unset => the webhook receiver fails closed (503) instead of trusting an
-      # unsigned delivery. Never commit a real value.
-      - key: BMONI_WEBHOOK_SECRET
-        sync: false
 
 # The real database. Render's managed PostgreSQL — SQLite would be wiped on
 # every deploy, which is exactly what this block prevents.

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import BMONIWebhookEvent, DepartmentBMONIWallet, Payment, Transaction
+from .models import Payment, Transaction
 
 
 @admin.register(Payment)
@@ -27,8 +27,20 @@ class PaymentAdmin(admin.ModelAdmin):
     )
     list_filter = ('status', 'refund_status', 'method')
     search_fields = ('reference', 'student__username', 'student__matric_number')
-    readonly_fields = ('created_at', 'updated_at')
+    # Only the refund decision (and the reviewer's note) is editable by hand.
+    # Who paid, what for, how much and the outcome are set by the system.
+    readonly_fields = (
+        'student', 'contribution', 'payment_type', 'method', 'amount',
+        'paid_amount', 'reference', 'status', 'recorded_by',
+        'receipt_reference', 'channel', 'proof', 'created_at', 'updated_at',
+    )
     date_hierarchy = 'created_at'
+
+    def has_add_permission(self, request):
+        return False  # payments are created by the payment flows only
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # financial evidence is never deleted
 
 
 @admin.register(Transaction)
@@ -49,71 +61,7 @@ class TransactionAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False  # proof records must not be edited
 
-
-@admin.register(DepartmentBMONIWallet)
-class DepartmentBMONIWalletAdmin(admin.ModelAdmin):
-    """
-    One row per department: the NGN account its contributions are paid into.
-
-    The account is issued by BMONI through the API, so the account fields are
-    read-only here — editing them by hand would put a number on a student's
-    screen that BMONI never issued. `status` and `last_error` stay visible so an
-    operator can see what happened. There is no BVN here to leak: only its last
-    four digits are stored.
-    """
-
-    list_display = (
-        'department',
-        'account_name',
-        'account_number',
-        'bank_name',
-        'status',
-        'provisioned_at',
-    )
-    list_filter = ('status', 'bank_name')
-    search_fields = ('department__name', 'account_name', 'account_number')
-    readonly_fields = (
-        'bmoni_user_id',
-        'bmoni_account_id',
-        'account_name',
-        'account_number',
-        'bank_name',
-        'bank_code',
-        'currency',
-        'provisioned_at',
-        'created_at',
-        'updated_at',
-    )
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
-@admin.register(BMONIWebhookEvent)
-class BMONIWebhookEventAdmin(admin.ModelAdmin):
-    """
-    BMONI's deliveries, verbatim: the evidence trail behind a deposit.
-
-    Read-only in the admin — rows are written by the webhook, never by hand —
-    and deduplicated on BMONI's own event id, so a retry never adds a row.
-    `processed=False` is the Phase 2 worklist: deliveries are archived without
-    crediting them today, so a row here is proof of what BMONI sent, not a claim
-    that money was credited.
-    """
-
-    list_display = ('event_type', 'event_id', 'wallet', 'processed', 'created_at')
-    list_filter = ('event_type', 'processed')
-    search_fields = ('event_id', 'event_type')
-    readonly_fields = (
-        'event_id',
-        'event_type',
-        'wallet',
-        'raw_payload',
-        'processed',
-        'processed_at',
-        'created_at',
-    )
-    date_hierarchy = 'created_at'
-
-    def has_add_permission(self, request):
-        return False  # rows are written by the webhook, never by hand
-
-    def has_change_permission(self, request, obj=None):
-        return False  # proof records must not be edited

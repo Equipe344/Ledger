@@ -1,7 +1,11 @@
 import csv
 import io
 
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.crypto import get_random_string
@@ -13,8 +17,10 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.authtoken.models import Token
 
-from .models import ClaimBatch, Department, PasswordResetCode, User
-from .permissions import IsAdminUser, IsClassRepOrAdmin
+from .lifecycle import LifecycleError, hand_over, record_role_change, start_session
+from .models import AcademicSession, ClaimBatch, Department, PasswordResetCode, User
+from .permissions import IsAdminUser, IsClassRepOrAdmin, is_admin
+from .throttles import AccountThrottle
 from .serializers import (
     DepartmentSerializer,
     UserRegistrationSerializer,
@@ -30,10 +36,24 @@ class RegisterView(generics.CreateAPIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'auth'
 
+    def create(self, request, *args, **kwargs):
+        # When the roster is the source of truth, students claim their
+        # imported account instead; open sign-up would let anyone register a
+        # real student's matric number before the roster arrives.
+        if not settings.ALLOW_SELF_REGISTRATION:
+            return Response(
+                {
+                    'error': 'registration_closed',
+                    'message': 'Sign-up is closed. Claim your account with the code from your department.',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().create(request, *args, **kwargs)
+
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ScopedRateThrottle, AccountThrottle]
     throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
@@ -102,6 +122,10 @@ def _new_code(length=10):
     )
 
 
+IMPORT_MAX_BYTES = 1_000_000
+IMPORT_MAX_ROWS = 5000
+
+
 class ImportStudentsView(APIView):
     """
     POST /api/auth/import/ — admin-only bulk registration from a CSV.
@@ -126,6 +150,11 @@ class ImportStudentsView(APIView):
             )
         dry_run = str(request.data.get('dry_run', '')).lower() in ('1', 'true', 'yes')
 
+        if upload.size > IMPORT_MAX_BYTES:
+            return Response(
+                {'error': 'bad_request', 'message': 'File is too large (1 MB maximum). Split it by class.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         raw = upload.read()
         try:
             text = raw.decode('utf-8-sig')
@@ -157,8 +186,30 @@ class ImportStudentsView(APIView):
         seen_matrics = set()
         seen_emails = set()
         pending_rows = []
+        # Loaded once, not queried per row: a 2,000-row roster costs three
+        # queries here instead of several thousand.
+        users = User.objects.all()
+        existing_matrics = {
+            m.casefold() for m in users.exclude(matric_number__isnull=True)
+            .values_list('matric_number', flat=True)
+        }
+        existing_usernames = {
+            u.casefold() for u in users.values_list('username', flat=True)
+        }
+        existing_emails = {
+            e.casefold() for e in users.exclude(email__isnull=True)
+            .values_list('email', flat=True)
+        }
 
         for row_number, raw_row in enumerate(reader, start=2):
+            if row_number > IMPORT_MAX_ROWS + 1:
+                return Response(
+                    {
+                        'error': 'bad_request',
+                        'message': f'Too many rows ({IMPORT_MAX_ROWS} maximum). Split the file by class.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             row = {
                 (k or '').strip().lower(): (v or '').strip()
                 for k, v in raw_row.items()
@@ -178,6 +229,15 @@ class ImportStudentsView(APIView):
             if level and level not in dict(User.LEVEL_CHOICES):
                 errors.append('invalid level: %s' % level)
             email = row.get('email', '') or None
+            if len(matric) > 50:
+                errors.append('matric_number is too long (50 characters maximum)')
+            if len(row.get('first_name', '')) > 150 or len(row.get('last_name', '')) > 150:
+                errors.append('name is too long (150 characters maximum)')
+            if email:
+                try:
+                    validate_email(email)
+                except DjangoValidationError:
+                    errors.append('invalid email: %s' % email)
 
             department = None
             dept_name = row.get('department', '')
@@ -195,17 +255,17 @@ class ImportStudentsView(APIView):
                 if key in seen_matrics:
                     errors.append('duplicate matric_number inside this file')
                 seen_matrics.add(key)
-                if User.objects.filter(matric_number__iexact=matric).exists():
+                if key in existing_matrics:
                     errors.append('a user with this matric_number already exists')
                     results['skipped_existing'] += 1
-                elif User.objects.filter(username__iexact=matric).exists():
+                elif key in existing_usernames:
                     errors.append('that matric_number is already taken as a username')
             if email:
                 ekey = email.casefold()
                 if ekey in seen_emails:
                     errors.append('duplicate email inside this file')
                 seen_emails.add(ekey)
-                if User.objects.filter(email__iexact=email).exists():
+                if ekey in existing_emails:
                     errors.append('a user with this email already exists')
 
             if errors:
@@ -229,24 +289,32 @@ class ImportStudentsView(APIView):
             results['would_create'] = len(pending_rows)
             return Response(results, status=status.HTTP_200_OK)
 
-        for data in pending_rows:
-            # password=None -> unusable: the account is inert until the
-            # student claims it (matric + first name + batch code).
-            User.objects.create_user(
-                username=data['matric_number'],
-                email=data['email'],
-                password=None,
-                first_name=data['first_name'],
-                last_name=data['last_name'],
-                matric_number=data['matric_number'],
-                department=data['department'],
-                level=data['level'],
-                role=User.ROLE_STUDENT,
-            )
-            results['created'] += 1
+        if not pending_rows:
+            # Nothing to claim, so no claim code is minted.
+            return Response(results, status=status.HTTP_200_OK)
 
-        batch = ClaimBatch.objects.create(code=_new_code(10), created_by=request.user)
+        # All or nothing: a failure on row 900 must not leave 899 accounts
+        # behind with no claim code to hand out.
+        with transaction.atomic():
+            batch = ClaimBatch.objects.create(code=_new_code(10), created_by=request.user)
+            for data in pending_rows:
+                # password=None -> unusable: the account is inert until the
+                # student claims it (matric + first name + THIS batch's code).
+                User.objects.create_user(
+                    username=data['matric_number'],
+                    email=data['email'],
+                    password=None,
+                    first_name=data['first_name'],
+                    last_name=data['last_name'],
+                    matric_number=data['matric_number'],
+                    department=data['department'],
+                    level=data['level'],
+                    role=User.ROLE_STUDENT,
+                    claim_batch=batch,
+                )
+        results['created'] = len(pending_rows)
         results['claim_batch_code'] = batch.code
+        results['claim_code_valid_days'] = ClaimBatch.CLAIM_TTL_DAYS
         return Response(results, status=status.HTTP_200_OK)
 
 
@@ -260,7 +328,7 @@ class ClaimAccountView(APIView):
     """
 
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ScopedRateThrottle, AccountThrottle]
     throttle_scope = 'auth'
 
     def post(self, request):
@@ -284,7 +352,17 @@ class ClaimAccountView(APIView):
             user is not None
             and user.first_name.strip().casefold() == first_name.casefold()
         )
-        if batch is None or user is None or not name_ok or user.has_usable_password():
+        # The code must still be live AND be the one issued with this
+        # student's own import, so a code from one class cannot claim an
+        # account in another. (Accounts imported before batches were linked
+        # have no batch on file and accept any live code.)
+        batch_ok = (
+            batch is not None
+            and batch.is_usable()
+            and user is not None
+            and user.claim_batch_id in (None, batch.id)
+        )
+        if not batch_ok or not name_ok or user.has_usable_password():
             return Response(generic_fail, status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -337,13 +415,27 @@ class IssueResetCodeView(APIView):
                 {'error': 'not_found', 'message': 'No user with that matric number.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        # Reps are scoped to their own department; admins can reach anyone.
-        if (
-            request.user.role == User.ROLE_CLASS_REP
-            and user.department_id != request.user.department_id
+        # Admins can reach anyone. A rep can only reset an ordinary STUDENT in
+        # their own department and level — never another rep or an admin, or a
+        # reset code would be a way to take over an account with more power.
+        # An executive covers the whole department and may also reset a class
+        # rep, but never another executive.
+        requester = request.user
+        is_executive = requester.role == User.ROLE_EXECUTIVE
+        resettable = (
+            (User.ROLE_STUDENT, User.ROLE_CLASS_REP) if is_executive
+            else (User.ROLE_STUDENT,)
+        )
+        if not is_admin(requester) and (
+            user.role not in resettable
+            or user.is_staff
+            or user.is_superuser
+            or requester.department_id is None
+            or user.department_id != requester.department_id
+            or (not is_executive and user.level != requester.level)
         ):
             return Response(
-                {'error': 'forbidden', 'message': 'That student is not in your department.'},
+                {'error': 'forbidden', 'message': 'You can only reset students within your own remit.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         if not user.has_usable_password():
@@ -374,7 +466,7 @@ class ResetPasswordView(APIView):
     one-time code they were given. Public + throttled like login."""
 
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ScopedRateThrottle, AccountThrottle]
     throttle_scope = 'auth'
 
     def post(self, request):
@@ -423,6 +515,8 @@ class ResetPasswordView(APIView):
 
         reset_code.user.set_password(password)
         reset_code.user.save()
+        # A reset must evict whoever held the old credentials: drop the token.
+        Token.objects.filter(user=reset_code.user).delete()
         reset_code.used_at = timezone.now()
         reset_code.save(update_fields=['used_at'])
         # Retire any other live codes for this student.
@@ -479,11 +573,11 @@ class SetUserRoleView(APIView):
 
     def post(self, request, pk):
         role = request.data.get('role')
-        if role not in (User.ROLE_STUDENT, User.ROLE_CLASS_REP):
+        if role not in (User.ROLE_STUDENT, *User.OFFICES):
             return Response(
                 {
                     'error': 'bad_request',
-                    'message': "role must be 'student' or 'class_rep'.",
+                    'message': "role must be 'student', 'class_rep' or 'executive'.",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -496,6 +590,11 @@ class SetUserRoleView(APIView):
         if user.id == request.user.id:
             return Response(
                 {'error': 'forbidden', 'message': 'You cannot change your own role.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser:
+            return Response(
+                {'error': 'forbidden', 'message': "An admin's role cannot be changed here."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         # Scope guard: a class rep can only promote students inside their own
@@ -517,8 +616,16 @@ class SetUserRoleView(APIView):
                     {'error': 'forbidden', 'message': 'You can only manage users in your own level.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        user.role = role
-        user.save(update_fields=['role'])
+        if role in User.OFFICES and (not user.department_id or user.graduated_at):
+            return Response(
+                {
+                    'error': 'bad_request',
+                    'message': 'An office holder must be a current student with a department.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            record_role_change(user, role, request.user, 'appointed')
         return Response({
             'user': {
                 'id': user.id,
@@ -569,3 +676,83 @@ class UserListView(APIView):
             }
             for user in qs
         ])
+
+
+class HandoverView(APIView):
+    """
+    POST /api/auth/handover/ — a class rep or executive passes their office
+    to another student (`matric_number`), confirming with their own
+    `password`. The caller becomes an ordinary student in the same step.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        # Handing over control of money is confirmed with the password, so a
+        # borrowed phone or a stolen token is not enough to give it away.
+        if not request.user.check_password(str(request.data.get('password') or '')):
+            return Response(
+                {'error': 'forbidden', 'message': 'Password is incorrect.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        matric = str(request.data.get('matric_number') or '').strip()
+        successor = (
+            User.objects.filter(matric_number__iexact=matric).first() if matric else None
+        )
+        office = request.user.role
+        try:
+            hand_over(request.user, successor)
+        except LifecycleError as exc:
+            return Response(
+                {'error': 'bad_request', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'message': 'Handover complete. You are now an ordinary student.',
+            'office': office,
+            'successor': {
+                'matric_number': successor.matric_number,
+                'full_name': successor.get_full_name() or successor.username,
+            },
+        })
+
+
+class SessionView(APIView):
+    """
+    GET  /api/auth/sessions/ — admin: past session rollovers.
+    POST /api/auth/sessions/ — admin: start a new session (`name`, optional
+    `dry_run`). Moves every class up a level, graduates the final-year class
+    and closes open fees. A session name can only ever be started once.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        return Response([
+            {
+                'name': session.name,
+                'started_at': session.started_at,
+                'promoted': session.promoted,
+                'graduated': session.graduated,
+                'fees_closed': session.fees_closed,
+            }
+            for session in AcademicSession.objects.all()[:50]
+        ])
+
+    def post(self, request):
+        dry_run = str(request.data.get('dry_run', '')).lower() in ('1', 'true', 'yes')
+        try:
+            result = start_session(
+                str(request.data.get('name') or ''), request.user, dry_run=dry_run
+            )
+        except LifecycleError as exc:
+            return Response(
+                {'error': 'bad_request', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            result,
+            status=status.HTTP_200_OK if dry_run else status.HTTP_201_CREATED,
+        )

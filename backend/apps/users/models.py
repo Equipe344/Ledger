@@ -10,6 +10,9 @@ from django.utils import timezone
 class Department(models.Model):
     name = models.CharField(max_length=150, unique=True)
     faculty = models.CharField(max_length=150)
+    # The last level of this department's programme. A new session graduates
+    # everyone at (or above) it; everyone else moves up one level.
+    final_level = models.CharField(max_length=10, default='400')
 
     class Meta:
         ordering = ['name']
@@ -45,11 +48,21 @@ class User(AbstractUser):
 
     ROLE_STUDENT = 'student'
     ROLE_CLASS_REP = 'class_rep'
+    # A department executive (e.g. the financial secretary): manages fees and
+    # offline payments for the WHOLE department, across levels. Like a class
+    # rep, still a student who owes dues.
+    ROLE_EXECUTIVE = 'executive'
     ROLE_ADMIN = 'admin'
+
+    # Offices a student can hold and hand over to another student.
+    OFFICES = (ROLE_CLASS_REP, ROLE_EXECUTIVE)
+    # Everyone who owes dues: admins/staff are the only exemption.
+    DUES_PAYING_ROLES = (ROLE_STUDENT, ROLE_CLASS_REP, ROLE_EXECUTIVE)
 
     ROLE_CHOICES = [
         (ROLE_STUDENT, 'Student'),
         (ROLE_CLASS_REP, 'Class Rep'),
+        (ROLE_EXECUTIVE, 'Department Executive'),
         (ROLE_ADMIN, 'Admin'),
     ]
 
@@ -90,6 +103,18 @@ class User(AbstractUser):
         default=ROLE_STUDENT
     )
     phone_number = models.CharField(max_length=20, blank=True, default='')
+    # Set when a new session graduates this student. A graduate keeps their
+    # login, payment history and receipts, but is no longer billed.
+    graduated_at = models.DateTimeField(null=True, blank=True)
+    # The roster import that created this account: only THAT import's claim
+    # code can claim it. Null for accounts that predate this field.
+    claim_batch = models.ForeignKey(
+        'ClaimBatch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='students',
+    )
 
     class Meta:
         ordering = ['id']
@@ -117,8 +142,16 @@ class ClaimBatch(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True, db_index=True)
 
+    CLAIM_TTL_DAYS = 30
+
     class Meta:
         ordering = ['-created_at']
+
+    def is_usable(self):
+        """Active, and still inside the claim window."""
+        return self.is_active and self.created_at >= timezone.now() - timedelta(
+            days=self.CLAIM_TTL_DAYS
+        )
 
     def __str__(self):
         return f"{self.code} (active={self.is_active})"
@@ -161,3 +194,52 @@ class PasswordResetCode(models.Model):
     def __str__(self):
         return f"{self.user} - {self.code}"
 
+
+
+class RoleChange(models.Model):
+    """
+    Audit trail for who held which office, and who put them there.
+
+    One row per change — an appointment by an admin, each side of a handover,
+    or an office lost at graduation. Rows are never edited or deleted.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='role_changes'
+    )
+    old_role = models.CharField(max_length=20)
+    new_role = models.CharField(max_length=20)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='role_changes_made',
+    )
+    reason = models.CharField(max_length=30)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user}: {self.old_role} -> {self.new_role} ({self.reason})"
+
+
+class AcademicSession(models.Model):
+    """
+    One row per session rollover. The unique name is what makes a rollover
+    run-once: starting "2026/2027" twice is refused instead of promoting
+    every class a second time.
+    """
+    name = models.CharField(max_length=20, unique=True)
+    started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+'
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    promoted = models.PositiveIntegerField(default=0)
+    graduated = models.PositiveIntegerField(default=0)
+    fees_closed = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return self.name

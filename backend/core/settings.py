@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlparse
 import sys
 
 from decouple import config, Csv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -50,20 +51,11 @@ PAYSTACK_PUBLIC_KEY = config('PAYSTACK_PUBLIC_KEY', default='')
 # Trailing slash is stripped so f'{FRONTEND_URL}/payment/callback' is always clean.
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173').rstrip('/')
 
-# BMONI Embedded — the department's own NGN virtual bank account.
-# Optional feature, so unlike PAYSTACK_SECRET_KEY the key is NOT required to
-# boot: the app serves the Paystack flows fine without it. An empty key leaves
-# the BMONI endpoints answering 503 (feature off) — never a fake account.
-# The key travels in the `x-api-key` header (not Authorization) and is a PARTNER
-# key: BMONI derives the partner from the key itself, so the now-deprecated
-# `partnerId` body field is never sent.
-# Base URL defaults to the shared sandbox. Production is
-# https://embedded.bmoni.com and must be set explicitly in the environment.
-BMONI_API_KEY = config('BMONI_API_KEY', default='')
-BMONI_BASE_URL = config('BMONI_BASE_URL', default='https://embedded-dev.bmoni.com')
-# The subscription's signing secret (BMONI's HMAC key). Empty => the webhook
-# receiver fails closed (503) rather than trusting an unsigned delivery.
-BMONI_WEBHOOK_SECRET = config('BMONI_WEBHOOK_SECRET', default='')
+# Open sign-up. Turn OFF in production once rosters are imported: students
+# then claim their imported account, and nobody can register a real
+# student's matric number before the roster arrives.
+ALLOW_SELF_REGISTRATION = config('ALLOW_SELF_REGISTRATION', default=True, cast=bool)
+
 
 # Application definition
 
@@ -211,7 +203,10 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # DEBUG=True (see core/urls.py). A production host must put object storage or a
 # static file server in front of MEDIA_ROOT.
 MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Payment proofs are evidence, so in production MEDIA_ROOT must point at
+# storage that survives a redeploy (a persistent disk mount). They are never
+# served from here directly — only through the authenticated proof endpoint.
+MEDIA_ROOT = Path(config('MEDIA_ROOT', default=str(BASE_DIR / 'media')))
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -226,8 +221,14 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
+    # Two limits on the public auth endpoints (login, claim, reset):
+    #   auth_account — attempts against ONE account, from anywhere. This is
+    #                  the brute-force control.
+    #   auth         — attempts from one IP. Generous on purpose: a whole
+    #                  campus can sit behind a single address.
     'DEFAULT_THROTTLE_RATES': {
-        'auth': '10/min',
+        'auth_account': '10/min',
+        'auth': '120/min',
     },
     # DRF throttle identity. Unset/0 -> REMOTE_ADDR (correct for local dev,
     # which has no proxy). Behind Render's reverse proxy set NUM_PROXIES=1 so
@@ -235,6 +236,17 @@ REST_FRAMEWORK = {
     # every student shares the proxy IP and the 10/min auth throttle locks the
     # whole school out at once.
     'NUM_PROXIES': int(config('NUM_PROXIES', default=0)),
+}
+
+# Throttle counters live in the database so every Gunicorn worker shares
+# them and a restart does not reset them. (The default per-process memory
+# cache multiplied each limit by the worker count.) The table is created by
+# `manage.py createcachetable` at deploy time.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
 }
 
 # Explicit frontend origins (env-overridable for production). The real Vite
@@ -249,6 +261,16 @@ CORS_ALLOWED_ORIGINS = config(
 )
 
 if not DEBUG:
+    # Production must never boot on a placeholder secret: the Paystack key is
+    # also the webhook HMAC key, so a known value lets anyone forge a payment.
+    if SECRET_KEY.startswith('django-insecure') or 'dummy' in PAYSTACK_SECRET_KEY:
+        raise ImproperlyConfigured(
+            'Set real SECRET_KEY and PAYSTACK_SECRET_KEY values when DEBUG=False.'
+        )
+    # The platform proxy terminates TLS and forwards plain HTTP. Without this
+    # header Django thinks every request is insecure and SECURE_SSL_REDIRECT
+    # loops forever — including on the Paystack webhook.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True

@@ -18,6 +18,13 @@ const manageLinks = [
   { to: "/admin/verify", label: "Verify payments" },
 ];
 
+// Reps and executives are still students who owe dues, so they also need
+// their own payment pages. (An office is handed over on the Profile page.)
+const officeHolderLinks = [
+  { to: "/contributions", label: "My dues" },
+  { to: "/history", label: "My payments" },
+];
+
 // Role management is admin-only, so it's only in the nav for admins — class
 // reps don't see it.
 const adminOnlyLinks = [
@@ -26,9 +33,11 @@ const adminOnlyLinks = [
 ];
 
 export default function AppShell({ children }) {
-  const { user, logout, isAdmin, canManage, displayName } = useAuth();
+  const { user, logout, isAdmin, isExecutive, holdsOffice, canManage, displayName } = useAuth();
   const navigate = useNavigate();
-  const links = canManage ? [...manageLinks, ...(isAdmin ? adminOnlyLinks : [])] : studentLinks;
+  const links = canManage
+    ? [...manageLinks, ...(isAdmin ? adminOnlyLinks : []), ...(holdsOffice ? officeHolderLinks : [])]
+    : studentLinks;
 
   async function handleLogout() {
     await logout();
@@ -66,7 +75,7 @@ export default function AppShell({ children }) {
           <div className="who">
             <div className="name">{displayName}</div>
             <div className="role">
-              {isAdmin ? "Administrator" : canManage ? "Class rep" : `${user?.matric_number} · ${user?.level} level`}
+              {isAdmin ? "Administrator" : isExecutive ? "Department executive" : canManage ? "Class rep" : `${user?.matric_number} · ${user?.level} level`}
             </div>
           </div>
         </div>
