@@ -11,7 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 import sys
 
 from decouple import config, Csv
@@ -136,6 +136,10 @@ def _database_settings(database_url):
             'PASSWORD': unquote(db_parts.password or ''),
             'HOST': db_parts.hostname or '',
             'PORT': db_parts.port or 5432,
+            # Connection options carried in the URL's query string. Hosted
+            # Postgres (Neon, Supabase) requires `?sslmode=require`; dropping
+            # it would send credentials and data unencrypted, or fail to connect.
+            'OPTIONS': dict(parse_qsl(db_parts.query)),
             'CONN_MAX_AGE': 60,  # reuse connections; hosted Postgres dislikes connection storms
         }
 
@@ -206,7 +210,8 @@ MEDIA_URL = 'media/'
 # Payment proofs are evidence, so in production MEDIA_ROOT must point at
 # storage that survives a redeploy (a persistent disk mount). They are never
 # served from here directly — only through the authenticated proof endpoint.
-MEDIA_ROOT = Path(config('MEDIA_ROOT', default=str(BASE_DIR / 'media')))
+# (An empty value counts as unset, so a blank field in a host dashboard is safe.)
+MEDIA_ROOT = Path(config('MEDIA_ROOT', default='') or BASE_DIR / 'media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
