@@ -97,6 +97,13 @@ export default function PaymentModal({ contribution, onClose, onAlreadyPaid, onS
 
         <p style={{ color: "var(--muted)", marginTop: -8 }}>
           Amount due: <strong style={{ color: "var(--ink)" }}>₦{Number(contribution.amount).toLocaleString()}</strong>
+          {Number(contribution.online_amount) > Number(contribution.amount) && (
+            <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem" }}>
+              Paying online adds a ₦{(Number(contribution.online_amount) - Number(contribution.amount)).toLocaleString()} Paystack
+              processing fee — you will be charged ₦{Number(contribution.online_amount).toLocaleString()}. Offline payments are
+              the fee only.
+            </span>
+          )}
         </p>
 
         {error && <div className="banner error">{error}</div>}

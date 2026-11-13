@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.utils.html import strip_tags
 from rest_framework import serializers
 
+from apps.payments.fees import online_charge
 from apps.users.models import Department
 from .models import Contribution
 
@@ -20,6 +21,10 @@ class ContributionSerializer(serializers.ModelSerializer):
         required=False,
     )
     has_paid = serializers.SerializerMethodField(read_only=True)
+    # What paying this fee ONLINE will cost: the fee plus Paystack's charge
+    # when that is passed on. Equal to `amount` otherwise. Offline payments
+    # are always just `amount`.
+    online_amount = serializers.SerializerMethodField(read_only=True)
     department_id = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
         source='department',
@@ -42,6 +47,7 @@ class ContributionSerializer(serializers.ModelSerializer):
             'title',
             'description',
             'amount',
+            'online_amount',
             'deadline',
             'is_mandatory',
             'target_level',
@@ -52,10 +58,13 @@ class ContributionSerializer(serializers.ModelSerializer):
             'department_id',
             'created_at',
         ]
-        read_only_fields = ['id', 'carried_over', 'has_paid', 'department', 'created_at']
+        read_only_fields = ['id', 'online_amount', 'carried_over', 'has_paid', 'department', 'created_at']
         extra_kwargs = {
             'description': {'required': False},
         }
+
+    def get_online_amount(self, obj):
+        return f'{online_charge(obj.amount):.2f}'
 
     def validate_amount(self, value):
         # Money rule: keep Decimal end-to-end; never float (BRIEF.md).

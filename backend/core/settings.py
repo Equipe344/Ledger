@@ -44,6 +44,17 @@ AUTH_USER_MODEL = 'users.User'
 PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY')
 PAYSTACK_PUBLIC_KEY = config('PAYSTACK_PUBLIC_KEY', default='')
 
+# Who pays Paystack's transaction fee. True: it is added to what the student
+# is charged online, so the department receives the full fee. False: the
+# department absorbs it. The four numbers are Paystack's published local
+# (NGN) pricing — update them here if Paystack changes its rates, or the
+# department will start receiving slightly less than the fee.
+PAYSTACK_PASS_FEE_TO_STUDENT = config('PAYSTACK_PASS_FEE_TO_STUDENT', default=False, cast=bool)
+PAYSTACK_FEE_PERCENT = config('PAYSTACK_FEE_PERCENT', default='1.5')
+PAYSTACK_FEE_FLAT = config('PAYSTACK_FEE_FLAT', default='100')
+PAYSTACK_FEE_FLAT_THRESHOLD = config('PAYSTACK_FEE_FLAT_THRESHOLD', default='2500')
+PAYSTACK_FEE_CAP = config('PAYSTACK_FEE_CAP', default='2000')
+
 # Public origin of the React SPA. The backend uses it to build the Paystack
 # `callback_url`, so a student is returned to the frontend's /payment/callback
 # page after checkout (that page then calls /payments/verify/). Local default is

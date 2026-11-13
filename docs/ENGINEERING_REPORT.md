@@ -27,7 +27,7 @@ No technology was added or replaced in this pass.
 
 | Check | Before | After |
 |---|---|---|
-| Backend tests | 283 pass (3 skipped) | 284 pass (0 skipped) — 43 BMONI tests removed, 44 added |
+| Backend tests | 283 pass (3 skipped) | 292 pass (0 skipped) — 43 BMONI tests removed, 52 added |
 | Migration drift | none | none |
 | `manage.py check --deploy` (real-length key) | not run | clean |
 | Frontend production build | not run | builds |
@@ -202,3 +202,27 @@ their time as a student.
 - There is no screen listing `RoleChange` history; it is in the Django admin
   database only (the model is not yet registered there).
 - Repeating a year, or a student changing department, is an admin edit.
+
+## 10. Who pays Paystack's fee (added 2026-11-13)
+
+Owner decision: **the student pays it**, so the department receives the full
+fee. Controlled by `PAYSTACK_PASS_FEE_TO_STUDENT` (on in `render.yaml`).
+
+- Paystack's published local rule: 1.5% + ₦100, the ₦100 waived under
+  ₦2,500, capped at ₦2,000 — and the fee applies to the passed-on amount too.
+  The charge is therefore grossed up, rounding up to the kobo
+  (`backend/apps/payments/fees.py`). A ₦5,000 fee is charged as ₦5,177.67.
+- `Payment.amount` stays the fee (what totals and rosters count);
+  `Payment.charge_amount` is what the gateway was asked to collect;
+  `paid_amount` is what it reported. Only the exact charge settles a payment.
+- Students see the online total before paying (`online_amount` on each fee).
+  Offline payments are the fee only.
+- A test sweeps every naira amount to ₦3,000 and a range up to ₦300,000 and
+  asserts the department never nets less than the fee and the student is
+  never overcharged by more than 5 kobo.
+
+**Watch for:** the four pricing numbers are settings. If Paystack changes its
+rates, or the account has a negotiated rate, update them — otherwise the
+department nets slightly less (or students pay slightly more) than intended.
+International cards are priced differently by Paystack and are not handled.
+This has not been checked against a real Paystack settlement report.

@@ -29,6 +29,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             'contribution',
             'payment_type',
             'amount',
+            'charge_amount',
             'paid_amount',
             'reference',
             'status',
@@ -45,6 +46,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             'id',
             'student',
             'contribution',
+            'charge_amount',
             'amount',       # server-side only: comes from the contribution, never the client
             'paid_amount',  # what the gateway charged — never client-supplied
             'reference',
@@ -101,14 +103,7 @@ class UnverifiedPaymentSerializer(serializers.ModelSerializer):
         read_only=True,
         default=None,  # contribution FK is nullable on legacy rows
     )
-    expected_amount = serializers.DecimalField(
-        source='contribution.amount',
-        max_digits=10,
-        decimal_places=2,
-        read_only=True,
-        default=None,  # null when the contribution FK is null
-        coerce_to_string=True,  # money leaves as a string, per contract §3/§4
-    )
+    expected_amount = serializers.SerializerMethodField()
     amount_received = serializers.DecimalField(
         source='paid_amount',
         max_digits=10,
@@ -137,10 +132,13 @@ class UnverifiedPaymentSerializer(serializers.ModelSerializer):
     def get_student_name(self, obj):
         return obj.student.get_full_name() or obj.student.username
 
+    def get_expected_amount(self, obj):
+        # What we asked the gateway for (fee + passed-on charge), as a string.
+        return f'{obj.charge_amount or obj.amount:.2f}'
+
     def get_mismatch_detail(self, obj):
-        received, expected = obj.paid_amount, None
-        if obj.contribution_id:
-            expected = obj.contribution.amount
+        # Compare against what we actually asked the gateway to collect.
+        received, expected = obj.paid_amount, obj.charge_amount or obj.amount
         if received is None or expected is None:
             return 'Amount unverifiable — flagged for review.'
         if received != expected:

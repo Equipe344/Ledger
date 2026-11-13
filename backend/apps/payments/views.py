@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 
 from apps.contributions.models import Contribution
 from apps.users.permissions import IsClassRepOrAdmin
+from .fees import online_charge
 from .models import Payment, Transaction
 from .permissions import IsAdminUser, is_admin
 from .serializers import (
@@ -87,8 +88,8 @@ def _settle_gateway_charge(payment, paid_kobo, currency=None):
     One rule, used by BOTH the webhook and the verify endpoint so they can
     never disagree about the same charge:
 
-      * exactly the agreed fee, in naira  -> success
-      * more or less than the agreed fee  -> failed + refund review
+      * exactly what we asked for, in naira -> success
+      * more or less than that              -> failed + refund review
       * an amount we cannot verify        -> failed + refund review (fail closed)
       * a currency other than NGN         -> failed + refund review
       * a fee this student already paid   -> failed + refund review (duplicate)
@@ -98,7 +99,9 @@ def _settle_gateway_charge(payment, paid_kobo, currency=None):
     `paid_amount` records what was actually taken, and a human reviews it
     before any refund is issued.
     """
-    expected_kobo = int(payment.amount * 100)
+    # What we asked the gateway to collect: the fee, plus Paystack's charge
+    # when that is passed on to the student.
+    expected_kobo = int((payment.charge_amount or payment.amount) * 100)
     actual_kobo = _as_kobo(paid_kobo)
 
     if actual_kobo is not None:
@@ -228,6 +231,7 @@ class InitializePaymentView(APIView):
         # The amount ALWAYS comes from the contribution — the student never
         # types a price. Kobo conversion is exact (Decimal, never float).
         amount = contribution.amount
+        charge = online_charge(amount)  # fee + Paystack's charge, if passed on
 
         try:
             response = requests.post(
@@ -238,7 +242,7 @@ class InitializePaymentView(APIView):
                 },
                 json={
                     'email': user.email,
-                    'amount': int(amount * 100),
+                    'amount': int(charge * 100),
                     'currency': CURRENCY,
                     # Returns the student to the SPA, which then calls verify.
                     # The webhook still settles the money server-side.
@@ -266,6 +270,7 @@ class InitializePaymentView(APIView):
             contribution=contribution,
             payment_type=Payment.PAYMENT_CONTRIBUTION,
             amount=amount,
+            charge_amount=charge,
             reference=data['reference'],
             status=Payment.STATUS_PENDING,
             method=Payment.METHOD_ONLINE,

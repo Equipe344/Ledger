@@ -37,6 +37,10 @@ services:
         sync: false                  # set in the dashboard; also the webhook HMAC key
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
+      # The student pays Paystack's transaction fee, so the department
+      # receives the full fee (owner decision, 2026-11-13).
+      - key: PAYSTACK_PASS_FEE_TO_STUDENT
+        value: "True"
       # Deployed SPA origin — the backend builds the Paystack `callback_url`
       # from it so students land back on /payment/callback after paying.
       # Set to the Vercel URL, e.g. https://your-app.vercel.app (no slash).

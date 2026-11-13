@@ -110,6 +110,14 @@ class Payment(models.Model):
         decimal_places=2
     )
 
+    # What the student is to be charged ONLINE for this payment: the fee plus
+    # Paystack's charge when that is passed on to the student. `amount` stays
+    # the fee itself (what the department is owed and what totals count).
+    # Null for offline payments and for rows created before pass-through.
+    charge_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
+
     reference = models.CharField(
         max_length=100,
         unique=True

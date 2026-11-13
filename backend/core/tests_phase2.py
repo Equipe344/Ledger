@@ -415,7 +415,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             set(response.data.keys()),
             {
                 'id', 'title', 'description', 'amount', 'deadline',
-                'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'has_paid',
+                'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'online_amount', 'has_paid',
                 'created_at', 'department', 'department_id',
             },
         )
@@ -450,7 +450,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             set(contribution.keys()),
             {
                 'id', 'title', 'description', 'amount', 'deadline',
-                'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'has_paid',
+                'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'online_amount', 'has_paid',
                 'created_at', 'department', 'department_id',
             },
         )
@@ -529,7 +529,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             set(history_item.keys()),
             {
                 'id', 'student', 'contribution', 'payment_type', 'amount',
-                'paid_amount', 'reference', 'status', 'refund_status',
+                'charge_amount', 'paid_amount', 'reference', 'status', 'refund_status',
                 'method', 'channel', 'note', 'proof_url',
                 'created_at', 'updated_at', 'verified_at',
             },
