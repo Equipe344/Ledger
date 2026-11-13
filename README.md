@@ -1,7 +1,7 @@
 # Departmental Payment/Contribution System
 
 **Team Visionary Coders** — NACOS National Build Challenge
-**Status:** all modules complete · **292 backend tests passing** · frontend builds clean
+**Status:** all modules complete · **296 backend tests passing** · frontend builds clean
 
 A full-stack solution: a **Django + DRF API** (`backend/`) and a **React + Vite
 app** (`frontend/`). Departments create contributions (dues, event fees, shirts,
@@ -221,6 +221,7 @@ checklist: [`docs/FRONTEND_LINKING.md`](docs/FRONTEND_LINKING.md).
 | `GET` | `/{id}/summary/` | any | Expected / collected / outstanding counts |
 | `GET` | `/{id}/payments/` | rep/admin | Roster: who paid, how, and who recorded it |
 | `POST` | `/{id}/payments/` | rep/admin | Mark a student paid **offline** (requires `receipt_reference`) |
+| `GET` | `/{id}/export/` | rep/executive/admin | Download the fee roster as a CSV for the treasurer: who paid, how, when, reference, who recorded it |
 
 ### Payments (`/api/payments/`)
 | Method | Path | Who | Purpose |
@@ -424,13 +425,13 @@ reconciled in `API_CONTRACT.md` first, never patched silently.
 
 ```bash
 cd backend
-python manage.py test            # full suite — 292 tests
+python manage.py test            # full suite — 296 tests
 python manage.py check           # system check
 python manage.py makemigrations --check --dry-run   # model drift check
 python db_backup.py              # snapshot db.sqlite3 -> backups/ (downloadable)
 ```
 
-**292 tests**, split by concern:
+**296 tests**, split by concern:
 
 | App | Focus |
 |---|---|

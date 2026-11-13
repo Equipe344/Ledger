@@ -108,3 +108,17 @@ export async function markOfflinePayment(id, { matric_number, receipt_reference 
   const { data } = await apiClient.post(`/contributions/${id}/payments/`, { matric_number, receipt_reference });
   return data;
 }
+
+// GET /contributions/{id}/export/ — the fee's roster as a CSV file (rep,
+// executive or admin). Fetched with the auth token, then handed to the
+// browser as a download.
+export async function downloadContributionCsv(id) {
+  if (MOCK_MODE) throw new Error("Export is not available in demo mode.");
+  const res = await apiClient.get(`/contributions/${id}/export/`, { responseType: "blob" });
+  const url = URL.createObjectURL(res.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `fee-${id}-roster.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}

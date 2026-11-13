@@ -1,4 +1,7 @@
+import csv
+
 from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, serializers, status
 from rest_framework.permissions import IsAuthenticated
@@ -265,6 +268,10 @@ class ContributionPaymentsView(APIView):
 
     def get(self, request, pk):
         contribution = get_object_or_404(_visible_contributions(request.user), pk=pk)
+        # A rep reads only their own level's roster, same as edit/mark-paid.
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
         status_map = payments_bridge.payment_status_map(contribution)
         rows = []
         for student in contribution.eligible_students().order_by('username'):
@@ -389,3 +396,67 @@ class ContributionPaymentsView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+def _csv_safe(value):
+    """
+    Text safe to open in a spreadsheet. A cell starting with = + - or @ is
+    run as a formula by Excel/Sheets, so names and receipt numbers typed by
+    users are prefixed with an apostrophe to keep them plain text.
+    """
+    text = '' if value is None else str(value)
+    return "'" + text if text[:1] in ('=', '+', '-', '@') else text
+
+
+class ContributionExportView(APIView):
+    """
+    GET /contributions/{id}/export/ — the fee's roster as a CSV download, for
+    the treasurer's records: every student who owes the fee, whether they have
+    paid, how, when, the reference to trace it by, and who recorded it.
+    Same access rules as the roster itself.
+    """
+
+    permission_classes = [IsClassRepOrAdmin]
+
+    def get(self, request, pk):
+        contribution = get_object_or_404(_visible_contributions(request.user), pk=pk)
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
+
+        paid = {
+            payment.student_id: payment
+            for payment in contribution.payments.filter(status='success')
+            .select_related('recorded_by')
+        }
+        students = list(contribution.eligible_students().order_by('matric_number'))
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="fee-{contribution.id}-roster.csv"'
+        response.write('\ufeff')  # so Excel reads names with accents correctly
+        writer = csv.writer(response)
+        writer.writerow(['Fee', _csv_safe(contribution.title)])
+        writer.writerow(['Department', _csv_safe(contribution.department.name)])
+        writer.writerow(['Fee amount (NGN)', f'{contribution.amount:.2f}'])
+        writer.writerow(['Students', len(students)])
+        writer.writerow(['Paid', len(paid)])
+        writer.writerow(['Outstanding', contribution.outstanding_count()])
+        writer.writerow(['Collected (NGN)', f'{contribution.total_collected():.2f}'])
+        writer.writerow([])
+        writer.writerow([
+            'Matric number', 'Name', 'Level', 'Status', 'How paid',
+            'Date paid', 'Reference', 'Receipt / teller no.', 'Recorded by',
+        ])
+        for student in students:
+            payment = paid.get(student.id)
+            writer.writerow([
+                _csv_safe(student.matric_number),
+                _csv_safe(_display_name(student)),
+                student.level or '',
+                'Paid' if payment else 'Not paid',
+                ('Online (Paystack)' if payment.method == 'online' else 'Offline') if payment else '',
+                payment.updated_at.strftime('%Y-%m-%d %H:%M') if payment else '',
+                _csv_safe(payment.reference) if payment else '',
+                _csv_safe(payment.receipt_reference) if payment else '',
+                _csv_safe(_display_name(payment.recorded_by)) if payment and payment.recorded_by else '',
+            ])
+        return response

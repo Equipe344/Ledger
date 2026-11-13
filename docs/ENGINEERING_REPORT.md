@@ -27,7 +27,7 @@ No technology was added or replaced in this pass.
 
 | Check | Before | After |
 |---|---|---|
-| Backend tests | 283 pass (3 skipped) | 292 pass (0 skipped) — 43 BMONI tests removed, 52 added |
+| Backend tests | 283 pass (3 skipped) | 296 pass (0 skipped) — 43 BMONI tests removed, 56 added |
 | Migration drift | none | none |
 | `manage.py check --deploy` (real-length key) | not run | clean |
 | Frontend production build | not run | builds |

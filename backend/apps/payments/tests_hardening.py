@@ -227,3 +227,53 @@ class HardeningTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.rep.refresh_from_db()
         self.assertEqual(self.rep.level, '300')
+
+    # --- treasurer export ----------------------------------------------------
+
+    def _export(self, user, fee=None):
+        self._as(user)
+        return self.client.get(f'/api/contributions/{(fee or self.fee).id}/export/')
+
+    def test_export_lists_who_paid_and_who_has_not(self):
+        Payment.objects.create(
+            student=self.student, contribution=self.fee, amount=self.fee.amount,
+            payment_type=Payment.PAYMENT_CONTRIBUTION, reference='MANUAL-1',
+            status=Payment.STATUS_SUCCESS, method=Payment.METHOD_MANUAL,
+            receipt_reference='TELLER-77', recorded_by=self.rep,
+        )
+        response = self._export(self.admin)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('attachment; filename="fee-', response['Content-Disposition'])
+        text = response.content.decode('utf-8-sig')
+        lines = text.splitlines()
+        self.assertIn('Paid,1', lines)
+        self.assertIn('Outstanding,3', lines)          # other_student, rep, rep2
+        self.assertIn('Collected (NGN),5000.00', lines)
+        paid_row = next(line for line in lines if line.startswith('PHY/001,'))
+        self.assertIn('Paid,Offline,', paid_row)
+        self.assertIn('MANUAL-1,TELLER-77,', paid_row)
+        unpaid_row = next(line for line in lines if line.startswith('PHY/002,'))
+        self.assertIn(',Not paid,', unpaid_row)
+        self.assertNotIn('PHY/005', text)              # the admin owes nothing
+
+    def test_export_neutralises_spreadsheet_formulas_in_names(self):
+        self.other_student.first_name = '=HYPERLINK("http://evil.test")'
+        self.other_student.save()
+        text = self._export(self.admin).content.decode('utf-8-sig')
+        self.assertIn("'=HYPERLINK", text)
+        self.assertNotIn(',=HYPERLINK', text)
+
+    def test_a_student_cannot_export_or_read_the_roster(self):
+        self.assertEqual(self._export(self.student).status_code, 403)
+
+    def test_a_rep_cannot_read_or_export_another_levels_roster(self):
+        other_level_fee = Contribution.objects.create(
+            department=self.department, created_by=self.admin, title='100L dues',
+            amount=Decimal('1000.00'), target_level='100',
+            deadline=timezone.now() + timezone.timedelta(days=30),
+        )
+        self.assertEqual(self._export(self.rep, other_level_fee).status_code, 403)
+        self.assertEqual(
+            self.client.get(f'/api/contributions/{other_level_fee.id}/payments/').status_code,
+            403,
+        )
