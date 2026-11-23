@@ -32,12 +32,14 @@ import { buildPaymentsForContribution, buildSummaryForContribution } from "../mo
  *      Marks an offline (cash/POS/bank) payment. Amount is set by the server.
  */
 
-export async function listContributions() {
+// `mine`: the fees the signed-in user owes and can pay. Reps and executives
+// pass it on their own payment pages; for students it is always the case.
+export async function listContributions({ mine = false } = {}) {
   if (MOCK_MODE) {
     await mockDelay();
     return [...mockContributions];
   }
-  const { data } = await apiClient.get("/contributions/");
+  const { data } = await apiClient.get("/contributions/", { params: mine ? { scope: "mine" } : {} });
   return data;
 }
 

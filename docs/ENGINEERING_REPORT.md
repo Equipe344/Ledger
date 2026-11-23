@@ -27,7 +27,7 @@ No technology was added or replaced in this pass.
 
 | Check | Before | After |
 |---|---|---|
-| Backend tests | 283 pass (3 skipped) | 296 pass (0 skipped) — 43 BMONI tests removed, 56 added |
+| Backend tests | 283 pass (3 skipped) | 301 pass (0 skipped) — 43 BMONI tests removed, 61 added |
 | Migration drift | none | none |
 | `manage.py check --deploy` (real-length key) | not run | clean |
 | Frontend production build | not run | builds |
@@ -96,7 +96,7 @@ movement. Rollback: `python manage.py migrate payments 0007 && python manage.py 
 | 1 | Proof files need a persistent disk | **Half done.** `MEDIA_ROOT` is now configurable, but the disk itself is infrastructure: Render's free disk is wiped on every deploy | Paid plan with a persistent disk mounted at `MEDIA_ROOT` |
 | 2 | ~~Rate limits are per-process memory~~ | **Fixed.** Counters are in the database (shared by all workers); 10/min per targeted account, 120/min per IP | — |
 | 3 | No live Paystack test | Mocks prove our logic, not the integration | Run the manual guide end-to-end on **test** keys in staging, including a real webhook delivery |
-| 4 | ~~One claim code works for every unclaimed account~~ | **Fixed.** A code only claims accounts from its own import and expires after 30 days | — |
+| 4 | ~~One claim code works for every unclaimed account~~ | **Fixed.** A code only claims accounts from its own import and expires after 30 days. Re-importing the roster issues a fresh code to anyone who has not claimed yet | — |
 | 5 | ~~Open self-registration~~ | **Fixed.** `ALLOW_SELF_REGISTRATION` switch; the Render blueprint sets it off | — |
 | 6 | ~~Roster import has no size cap and is not atomic~~ | **Fixed.** 1 MB / 5,000-row cap, field validation, all-or-nothing | — |
 | 3a | **The live Paystack secret key was shared in a chat** | Anyone with it can forge webhooks and move money through the account | Roll the key in the Paystack dashboard before going live; put the new one only in the host's secret settings |
@@ -180,7 +180,8 @@ also appoint or remove an office holder with `set-role`.
 - A graduating office holder loses the office (audited).
 - Every open fee is closed, so last session's fees cannot bill the new class.
 - **Unpaid mandatory dues are carried over.** Before anyone moves, each
-  student who still owes a mandatory fee gets a `Debt` row. The fee stays
+  student who still owes a mandatory fee that is still **open** (not closed by
+  the department) and was raised since the previous session gets a `Debt` row. The fee stays
   visible and payable for that student in every later session and after
   graduation, until an ordinary payment (online, offline proof, or a
   mark-paid by an executive/admin) settles it. Optional fees just close.

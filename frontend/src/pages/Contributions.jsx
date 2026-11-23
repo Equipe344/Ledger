@@ -15,7 +15,7 @@ export default function Contributions() {
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
-    setContributions(await listContributions());
+    setContributions(await listContributions({ mine: true }));
     setLoading(false);
   }
 

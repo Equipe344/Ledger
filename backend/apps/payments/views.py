@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.contributions.models import Contribution
+from apps.users.models import User
 from apps.users.permissions import IsClassRepOrAdmin
 from .fees import online_charge
 from .models import Payment, Transaction
@@ -456,7 +457,7 @@ def _can_review(user, payment):
     contribution = payment.contribution
     if user.department_id is None or contribution.department_id != user.department_id:
         return False
-    return user.role == 'executive' or contribution.target_level in (None, user.level)
+    return user.role == User.ROLE_EXECUTIVE or contribution.target_level in (None, user.level)
 
 
 def _review_queue(user):
@@ -472,7 +473,7 @@ def _review_queue(user):
     if user.department_id is None:
         return qs.none()
     qs = qs.filter(contribution__department_id=user.department_id)
-    if user.role == 'executive':
+    if user.role == User.ROLE_EXECUTIVE:
         return qs  # the whole department, every level
     return qs.filter(
         Q(contribution__target_level__isnull=True)

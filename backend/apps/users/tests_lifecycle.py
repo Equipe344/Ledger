@@ -150,6 +150,16 @@ class HandoverTests(LifecycleBase):
             self.assertEqual(self._hand_over(self.executive, matric).status_code, 400, matric)
         self.assertFalse(RoleChange.objects.exists())
 
+    def test_guessing_the_handover_password_is_limited_per_account(self):
+        statuses = [
+            self._hand_over(self.executive, 'PHY/101', password='guess').status_code
+            for _ in range(11)
+        ]
+        self.assertEqual(statuses[:10], [403] * 10)
+        self.assertEqual(statuses[10], 429)
+        self.executive.refresh_from_db()
+        self.assertEqual(self.executive.role, User.ROLE_EXECUTIVE)
+
     def test_a_plain_student_has_nothing_to_hand_over(self):
         self.assertEqual(self._hand_over(self.student, 'PHY/101').status_code, 400)
 
@@ -328,6 +338,35 @@ class CarriedDebtTests(LifecycleBase):
         self._as(self.fresher)
         self.assertTrue(self.client.get('/api/contributions/').data[0]['has_paid'])
 
+    def test_a_fee_closed_before_rollover_is_not_carried(self):
+        self.dues.is_closed = True          # e.g. the event was cancelled
+        self.dues.save()
+        self.assertEqual(self._start().data['debts_carried'], 0)
+        self.assertEqual(self._titles(self.fresher), [])
+
+    def test_fees_from_before_the_previous_session_are_never_carried(self):
+        self._start('2026/2027')            # carries the 100L dues
+        stale = self._fee(title='Stale fee')
+        Contribution.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(days=400)
+        )
+        current = self._fee(title='This year')
+        response = self._start('2027/2028')
+        carried = set(Contribution.objects.filter(carried_over=True).values_list('title', flat=True))
+        self.assertIn('This year', carried)
+        self.assertNotIn('Stale fee', carried)
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(current.debts.exists())
+
+    def test_an_office_holder_sees_their_own_dues_with_scope_mine(self):
+        self.executive.level = '100'
+        self.executive.save()
+        self._start()                      # executive now owes the carried 100L dues
+        self._as(self.executive)
+        mine = self.client.get('/api/contributions/?scope=mine').data
+        self.assertEqual([row['title'] for row in mine], ['100L dues'])
+        self.assertTrue(mine[0]['carried_over'])
+
     def test_a_past_sessions_fee_cannot_be_reopened_or_edited(self):
         self._start()
         self._as(self.admin)
@@ -360,6 +399,20 @@ class AccountSafetyTests(LifecycleBase):
         code_b = self._import(['Bola,Ade,PHY/901']).data['claim_batch_code']
         self.assertEqual(self._claim('PHY/900', 'Ada', code_b).status_code, 400)
         self.assertEqual(self._claim('PHY/900', 'Ada', code_a).status_code, 200)
+
+    def test_re_importing_reissues_a_fresh_code_to_unclaimed_students(self):
+        old_code = self._import(['Ada,Obi,PHY/900', 'Bola,Ade,PHY/901']).data['claim_batch_code']
+        self.assertEqual(self._claim('PHY/901', 'Bola', old_code).status_code, 200)
+        ClaimBatch.objects.filter(code=old_code).update(
+            created_at=timezone.now() - timedelta(days=ClaimBatch.CLAIM_TTL_DAYS + 1)
+        )
+        again = self._import(['Ada,Obi,PHY/900', 'Bola,Ade,PHY/901'])
+        self.assertEqual((again.data['created'], again.data['reissued']), (0, 1))
+        new_code = again.data['claim_batch_code']
+        self.assertEqual(self._claim('PHY/900', 'Ada', old_code).status_code, 400)
+        self.assertEqual(self._claim('PHY/900', 'Ada', new_code).status_code, 200)
+        # A student who already claimed is not handed back to a code.
+        self.assertEqual(self._claim('PHY/901', 'Bola', new_code).status_code, 400)
 
     def test_a_claim_code_expires(self):
         code = self._import(['Ada,Obi,PHY/900']).data['claim_batch_code']

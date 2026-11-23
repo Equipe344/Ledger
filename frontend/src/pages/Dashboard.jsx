@@ -17,7 +17,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([listContributions(), listHistory()]).then(([c, p]) => {
+    Promise.all([listContributions({ mine: true }), listHistory()]).then(([c, p]) => {
       setContributions(c);
       setPayments(p);
       setLoading(false);

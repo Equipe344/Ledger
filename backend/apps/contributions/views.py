@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.users.models import User
-from apps.users.permissions import IsClassRepOrAdmin
+from apps.users.permissions import IsClassRepOrAdmin, is_admin
 
 from . import payments_bridge
 from .models import Contribution
@@ -77,7 +77,13 @@ class ContributionListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         qs = _visible_contributions(self.request.user)
 
-        if self.request.method == 'GET' and self.request.user.role == User.ROLE_STUDENT:
+        # Students always see what they owe. Reps and executives owe dues too:
+        # their own payment pages ask for `?scope=mine` to get the same list
+        # instead of the management view.
+        if self.request.method == 'GET' and (
+            self.request.user.role == User.ROLE_STUDENT
+            or self.request.query_params.get('scope') == 'mine'
+        ):
             # This session's open fees for their level, plus any unpaid
             # dues carried over from earlier sessions.
             return Contribution.payable_by(self.request.user).select_related(
@@ -104,7 +110,7 @@ class ContributionListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         target_department = serializer.validated_data.get('department')
 
-        if user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser:
+        if is_admin(user):
             if not target_department:
                 if user.department_id:
                     target_department = user.department
@@ -182,7 +188,6 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise serializers.ValidationError({
                 'non_field_errors': 'This fee belongs to a past session and can no longer be changed.'
             })
-        is_admin = user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser
 
         # Once anyone has paid (or has a payment in flight), the price and the
         # audience are frozen. Otherwise a fee could be dropped to a token
@@ -201,7 +206,7 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
                 )
             })
 
-        if is_admin:
+        if is_admin(user):
             serializer.save()
             return
         # A class rep keeps a fee inside their own level; an executive may

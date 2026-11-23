@@ -34,7 +34,7 @@ class IsAdminUser(BasePermission):
         return bool(
             request.user
             and request.user.is_authenticated
-            and (request.user.role == User.ROLE_ADMIN or request.user.is_staff or request.user.is_superuser)
+            and is_admin(request.user)
         )
 
 

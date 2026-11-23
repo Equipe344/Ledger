@@ -120,7 +120,18 @@ def start_session(name, started_by, dry_run=False):
 
     # Record who still owes what BEFORE any level changes, while each fee's
     # class list is still the class it was raised for.
-    ending = list(Contribution.objects.filter(is_mandatory=True, carried_over=False))
+    #
+    # Only fees still OPEN are carried: a fee the department closed (e.g. a
+    # cancelled event) is not owed. Fees older than the previous session are
+    # never carried, so a rollover cannot bill today's classes for a fee
+    # raised for another cohort years ago.
+    ending = Contribution.objects.filter(
+        is_mandatory=True, carried_over=False, is_closed=False
+    )
+    previous = AcademicSession.objects.order_by('-started_at').first()
+    if previous is not None:
+        ending = ending.filter(created_at__gte=previous.started_at)
+    ending = list(ending)
     debts = []
     for fee in ending:
         paid = Payment.objects.filter(

@@ -19,6 +19,12 @@ class AccountThrottle(SimpleRateThrottle):
     scope = 'auth_account'
 
     def get_cache_key(self, request, view):
+        # A signed-in caller confirming their own password (e.g. handover)
+        # is limited on their own account.
+        if request.user and request.user.is_authenticated:
+            return self.cache_format % {
+                'scope': self.scope, 'ident': f'user-{request.user.pk}'
+            }
         data = request.data
         identifier = ''
         for field in ('matric_number', 'email', 'username'):

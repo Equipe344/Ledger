@@ -44,13 +44,24 @@ export default function VerifyPayments() {
   }
 
   // Proofs are private, so a plain link (which cannot send the auth token)
-  // will not work: fetch the file with the token, then open it.
+  // will not work: fetch the file with the token, then show it. The tab is
+  // opened during the click itself — opening it after the download would be
+  // treated as an unrequested popup and blocked.
   async function openProof(url) {
     setError("");
+    const tab = window.open("", "_blank");
     try {
       const res = await apiClient.get(url, { responseType: "blob" });
-      window.open(URL.createObjectURL(res.data), "_blank", "noopener");
+      const fileUrl = URL.createObjectURL(res.data);
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = fileUrl;
+      } else {
+        window.location.assign(fileUrl);
+      }
+      setTimeout(() => URL.revokeObjectURL(fileUrl), 60_000);
     } catch {
+      if (tab) tab.close();
       setError("Could not open that proof. It may no longer be available.");
     }
   }

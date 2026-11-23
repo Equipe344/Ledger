@@ -192,6 +192,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # tests — no real credentials are ever stored there. Production is untouched.
 if 'test' in sys.argv:
     PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+    # Tests assert exact charges; they turn pass-through on explicitly
+    # where they need it, so a developer's .env must not decide it.
+    PAYSTACK_PASS_FEE_TO_STUDENT = False
 
 
 # Internationalization

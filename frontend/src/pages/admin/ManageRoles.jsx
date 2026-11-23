@@ -156,7 +156,7 @@ export default function ManageRoles() {
         <h3 style={{ marginTop: 0 }}>Start a new session</h3>
         <p style={{ color: "var(--muted)", marginTop: 0 }}>
           Moves every class up one level, graduates each department's final-year class and closes all open fees.
-          Unpaid mandatory dues stay owed and follow each student.
+          Unpaid mandatory dues on open fees stay owed and follow each student; fees you have already closed are not carried.
           Payment records are not changed. This cannot be undone, so preview it first.
         </p>
         {sessionError && <div className="banner error">{sessionError}</div>}

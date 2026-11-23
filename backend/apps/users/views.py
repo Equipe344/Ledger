@@ -2,6 +2,7 @@ import csv
 import io
 
 from django.conf import settings
+from django.contrib.auth.hashers import is_password_usable
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
@@ -189,10 +190,16 @@ class ImportStudentsView(APIView):
         # Loaded once, not queried per row: a 2,000-row roster costs three
         # queries here instead of several thousand.
         users = User.objects.all()
-        existing_matrics = {
-            m.casefold() for m in users.exclude(matric_number__isnull=True)
-            .values_list('matric_number', flat=True)
-        }
+        existing_matrics = {}
+        for user_id, matric_on_file, password in users.exclude(
+            matric_number__isnull=True
+        ).values_list('pk', 'matric_number', 'password'):
+            # Unclaimed accounts (no usable password yet) can be re-issued a
+            # fresh claim code by importing them again.
+            existing_matrics[matric_on_file.casefold()] = (
+                user_id, not is_password_usable(password)
+            )
+        reissue_ids = []
         existing_usernames = {
             u.casefold() for u in users.values_list('username', flat=True)
         }
@@ -216,6 +223,15 @@ class ImportStudentsView(APIView):
                 if k is not None
             }
             matric = row.get('matric_number', '')
+            key = matric.casefold()
+            # A student already imported who has not claimed yet (their code
+            # may have expired): link them to this import's new code. Nothing
+            # else about their record changes.
+            if key and key in existing_matrics and existing_matrics[key][1]:
+                if key not in seen_matrics:
+                    seen_matrics.add(key)
+                    reissue_ids.append(existing_matrics[key][0])
+                continue
             errors = []
             if not matric:
                 errors.append('matric_number is required')
@@ -251,7 +267,6 @@ class ImportStudentsView(APIView):
                     errors.append('unknown department: %s' % dept_name)
 
             if matric:
-                key = matric.casefold()
                 if key in seen_matrics:
                     errors.append('duplicate matric_number inside this file')
                 seen_matrics.add(key)
@@ -285,11 +300,12 @@ class ImportStudentsView(APIView):
                 'email': email,
             })
 
+        results['reissued'] = len(reissue_ids)
         if dry_run:
             results['would_create'] = len(pending_rows)
             return Response(results, status=status.HTTP_200_OK)
 
-        if not pending_rows:
+        if not pending_rows and not reissue_ids:
             # Nothing to claim, so no claim code is minted.
             return Response(results, status=status.HTTP_200_OK)
 
@@ -312,6 +328,9 @@ class ImportStudentsView(APIView):
                     role=User.ROLE_STUDENT,
                     claim_batch=batch,
                 )
+            # Unclaimed students from earlier imports move to this code; their
+            # old code stops working for them.
+            User.objects.filter(pk__in=reissue_ids).update(claim_batch=batch)
         results['created'] = len(pending_rows)
         results['claim_batch_code'] = batch.code
         results['claim_code_valid_days'] = ClaimBatch.CLAIM_TTL_DAYS
@@ -592,7 +611,7 @@ class SetUserRoleView(APIView):
                 {'error': 'forbidden', 'message': 'You cannot change your own role.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser:
+        if is_admin(user):
             return Response(
                 {'error': 'forbidden', 'message': "An admin's role cannot be changed here."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -686,7 +705,7 @@ class HandoverView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ScopedRateThrottle, AccountThrottle]
     throttle_scope = 'auth'
 
     def post(self, request):

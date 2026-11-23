@@ -1,7 +1,7 @@
 # Departmental Payment/Contribution System
 
 **Team Visionary Coders** — NACOS National Build Challenge
-**Status:** all modules complete · **296 backend tests passing** · frontend builds clean
+**Status:** all modules complete · **301 backend tests passing** · frontend builds clean
 
 A full-stack solution: a **Django + DRF API** (`backend/`) and a **React + Vite
 app** (`frontend/`). Departments create contributions (dues, event fees, shirts,
@@ -84,6 +84,7 @@ venv\Scripts\activate                # Windows   (mac/linux: source venv/bin/act
 pip install -r requirements.txt
 copy .env.example .env               # then fill in your own Paystack test keys
 python manage.py migrate
+python manage.py createcachetable    # rate-limit counters live in the database
 python manage.py createsuperuser
 python manage.py runserver
 ```
@@ -425,13 +426,13 @@ reconciled in `API_CONTRACT.md` first, never patched silently.
 
 ```bash
 cd backend
-python manage.py test            # full suite — 296 tests
+python manage.py test            # full suite — 301 tests
 python manage.py check           # system check
 python manage.py makemigrations --check --dry-run   # model drift check
 python db_backup.py              # snapshot db.sqlite3 -> backups/ (downloadable)
 ```
 
-**296 tests**, split by concern:
+**301 tests**, split by concern:
 
 | App | Focus |
 |---|---|
