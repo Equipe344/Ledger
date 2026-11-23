@@ -1,4 +1,7 @@
+import csv
+
 from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, serializers, status
 from rest_framework.permissions import IsAuthenticated
@@ -6,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.users.models import User
-from apps.users.permissions import IsClassRepOrAdmin
+from apps.users.permissions import IsClassRepOrAdmin, is_admin
 
 from . import payments_bridge
 from .models import Contribution
@@ -22,6 +25,10 @@ def _visible_contributions(user):
     choke point that prevents cross-department IDOR on detail/summary/payments.
     """
     qs = Contribution.objects.select_related('department', 'created_by').all()
+    if user.graduated_at:
+        # A graduate is billed nothing new, but debts carried over from
+        # their time as a student still follow them.
+        return qs.filter(carried_over=True, debts__student=user).distinct()
     if user.department_id:
         qs = qs.filter(department_id=user.department_id)
     elif not (user.is_staff or user.is_superuser):
@@ -70,15 +77,18 @@ class ContributionListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         qs = _visible_contributions(self.request.user)
 
-        if self.request.method == 'GET' and self.request.user.role == User.ROLE_STUDENT:
-            # Students only see fees still open, and only their level.
-            qs = qs.filter(Contribution.open_q())
-            if self.request.user.level:
-                qs = qs.filter(
-                    Q(target_level__isnull=True) | Q(target_level=self.request.user.level)
-                )
-            else:
-                qs = qs.filter(target_level__isnull=True)
+        # Students always see what they owe. Reps and executives owe dues too:
+        # their own payment pages ask for `?scope=mine` to get the same list
+        # instead of the management view.
+        if self.request.method == 'GET' and (
+            self.request.user.role == User.ROLE_STUDENT
+            or self.request.query_params.get('scope') == 'mine'
+        ):
+            # This session's open fees for their level, plus any unpaid
+            # dues carried over from earlier sessions.
+            return Contribution.payable_by(self.request.user).select_related(
+                'department', 'created_by'
+            )
 
         if (
             self.request.method == 'GET'
@@ -100,7 +110,7 @@ class ContributionListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         target_department = serializer.validated_data.get('department')
 
-        if user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser:
+        if is_admin(user):
             if not target_department:
                 if user.department_id:
                     target_department = user.department
@@ -170,10 +180,47 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
         fixed at creation and only a system admin may change it.
         """
         user = self.request.user
-        if user.role == User.ROLE_ADMIN or user.is_staff or user.is_superuser:
+        fee = serializer.instance
+        new = serializer.validated_data
+        if fee.carried_over:
+            # A past session's fee is a frozen record. Reopening or editing
+            # it would bill the class that has since moved into that level.
+            raise serializers.ValidationError({
+                'non_field_errors': 'This fee belongs to a past session and can no longer be changed.'
+            })
+
+        # Once anyone has paid (or has a payment in flight), the price and the
+        # audience are frozen. Otherwise a fee could be dropped to a token
+        # amount, paid, and raised again — leaving a genuine "paid" record for
+        # money that was never collected. Close it and create a new fee instead.
+        money_terms_changed = (
+            new.get('amount', fee.amount) != fee.amount
+            or new.get('target_level', fee.target_level) != fee.target_level
+            or new.get('department', fee.department) != fee.department
+        )
+        if money_terms_changed and fee.payments.exclude(status='failed').exists():
+            raise serializers.ValidationError({
+                'non_field_errors': (
+                    'This fee already has payments, so its amount, level and '
+                    'department are locked. Close it and create a new fee.'
+                )
+            })
+
+        if is_admin(user):
             serializer.save()
-        else:
-            serializer.save(department=serializer.instance.department)
+            return
+        # A class rep keeps a fee inside their own level; an executive may
+        # target any level. Neither can move it to another department.
+        if (
+            user.role == User.ROLE_CLASS_REP
+            and new.get('target_level')
+            and user.level
+            and new['target_level'] != user.level
+        ):
+            raise serializers.ValidationError(
+                {'target_level': 'You can only target your own level.'}
+            )
+        serializer.save(department=fee.department)
 
     def destroy(self, request, *args, **kwargs):
         # Same level gate for close/reopen: closing another level's fee (or
@@ -226,6 +273,10 @@ class ContributionPaymentsView(APIView):
 
     def get(self, request, pk):
         contribution = get_object_or_404(_visible_contributions(request.user), pk=pk)
+        # A rep reads only their own level's roster, same as edit/mark-paid.
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
         status_map = payments_bridge.payment_status_map(contribution)
         rows = []
         for student in contribution.eligible_students().order_by('username'):
@@ -281,7 +332,15 @@ class ContributionPaymentsView(APIView):
         # Level-targeted fees too: marking a student who does not owe this fee
         # would bank a success row we then count as collected, inflating the
         # totals with money that was never due.
-        if (
+        if contribution.carried_over:
+            # A past session's fee: the question is whether THIS student was
+            # recorded as owing it, not which level they are in today.
+            if not contribution.debts.filter(student=student).exists():
+                return Response(
+                    {'error': 'bad_request', 'message': 'That student does not owe this carried-over fee.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif (
             contribution.target_level
             and student.level != contribution.target_level
         ):
@@ -342,3 +401,67 @@ class ContributionPaymentsView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+def _csv_safe(value):
+    """
+    Text safe to open in a spreadsheet. A cell starting with = + - or @ is
+    run as a formula by Excel/Sheets, so names and receipt numbers typed by
+    users are prefixed with an apostrophe to keep them plain text.
+    """
+    text = '' if value is None else str(value)
+    return "'" + text if text[:1] in ('=', '+', '-', '@') else text
+
+
+class ContributionExportView(APIView):
+    """
+    GET /contributions/{id}/export/ — the fee's roster as a CSV download, for
+    the treasurer's records: every student who owes the fee, whether they have
+    paid, how, when, the reference to trace it by, and who recorded it.
+    Same access rules as the roster itself.
+    """
+
+    permission_classes = [IsClassRepOrAdmin]
+
+    def get(self, request, pk):
+        contribution = get_object_or_404(_visible_contributions(request.user), pk=pk)
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
+
+        paid = {
+            payment.student_id: payment
+            for payment in contribution.payments.filter(status='success')
+            .select_related('recorded_by')
+        }
+        students = list(contribution.eligible_students().order_by('matric_number'))
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="fee-{contribution.id}-roster.csv"'
+        response.write('\ufeff')  # so Excel reads names with accents correctly
+        writer = csv.writer(response)
+        writer.writerow(['Fee', _csv_safe(contribution.title)])
+        writer.writerow(['Department', _csv_safe(contribution.department.name)])
+        writer.writerow(['Fee amount (NGN)', f'{contribution.amount:.2f}'])
+        writer.writerow(['Students', len(students)])
+        writer.writerow(['Paid', len(paid)])
+        writer.writerow(['Outstanding', contribution.outstanding_count()])
+        writer.writerow(['Collected (NGN)', f'{contribution.total_collected():.2f}'])
+        writer.writerow([])
+        writer.writerow([
+            'Matric number', 'Name', 'Level', 'Status', 'How paid',
+            'Date paid', 'Reference', 'Receipt / teller no.', 'Recorded by',
+        ])
+        for student in students:
+            payment = paid.get(student.id)
+            writer.writerow([
+                _csv_safe(student.matric_number),
+                _csv_safe(_display_name(student)),
+                student.level or '',
+                'Paid' if payment else 'Not paid',
+                ('Online (Paystack)' if payment.method == 'online' else 'Offline') if payment else '',
+                payment.updated_at.strftime('%Y-%m-%d %H:%M') if payment else '',
+                _csv_safe(payment.reference) if payment else '',
+                _csv_safe(payment.receipt_reference) if payment else '',
+                _csv_safe(_display_name(payment.recorded_by)) if payment and payment.recorded_by else '',
+            ])
+        return response

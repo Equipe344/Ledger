@@ -16,6 +16,13 @@ import axios from "axios";
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 export const MOCK_MODE = !API_BASE_URL;
 
+// A production build with no API URL would silently run on mock data and show
+// students fake "payment successful" screens. Fail the build's first load
+// loudly instead. (VITE_ALLOW_MOCK=true keeps a deliberate mock-only demo.)
+if (import.meta.env.PROD && MOCK_MODE && import.meta.env.VITE_ALLOW_MOCK !== "true") {
+  throw new Error("VITE_API_BASE_URL is not set — refusing to run on mock data in production.");
+}
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },

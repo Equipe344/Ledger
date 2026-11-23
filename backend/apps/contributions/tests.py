@@ -166,7 +166,7 @@ class ContributionTests(APITestCase):
         self.assertEqual(
             sorted(row.keys()),
             sorted(['id', 'title', 'description', 'amount', 'deadline',
-                    'is_mandatory', 'target_level', 'is_closed', 'has_paid',
+                    'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'online_amount', 'has_paid',
                     'department', 'department_id', 'created_at']))
         self.assertIs(row['has_paid'], False)
         self.assertIs(row['is_closed'], False)
@@ -193,7 +193,7 @@ class ContributionTests(APITestCase):
         self.assertEqual(
             sorted(r.data.keys()),
             sorted(['id', 'title', 'description', 'amount', 'deadline',
-                    'is_mandatory', 'target_level', 'is_closed', 'has_paid',
+                    'is_mandatory', 'target_level', 'is_closed', 'carried_over', 'online_amount', 'has_paid',
                     'department', 'department_id', 'created_at']))
         self.assertEqual(r.data['amount'], '5000.00')
         self.assertIs(r.data['has_paid'], False)

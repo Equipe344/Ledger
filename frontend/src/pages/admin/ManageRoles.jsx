@@ -1,13 +1,14 @@
 import { useState } from "react";
 import AppShell from "../../components/AppShell";
-import { setUserRoleByMatric, issueResetCode } from "../../api/auth";
+import { setUserRoleByMatric, issueResetCode, startSession } from "../../api/auth";
 import { getErrorMessage } from "../../api/client";
 
 // A rep is a normal student until an admin ticks them — so only the two
 // self-service-able roles are offered (the backend rejects anything else).
 const ROLES = [
   { value: "student", label: "Student" },
-  { value: "class_rep", label: "Class rep" },
+  { value: "class_rep", label: "Class rep (one level)" },
+  { value: "executive", label: "Department executive (whole department)" },
 ];
 
 export default function ManageRoles() {
@@ -23,6 +24,30 @@ export default function ManageRoles() {
   const [resetCode, setResetCode] = useState(null);
   const [resetError, setResetError] = useState("");
   const [issuing, setIssuing] = useState(false);
+
+  // New academic session: always previewed first, then confirmed.
+  const [sessionName, setSessionName] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [sessionDone, setSessionDone] = useState(null);
+  const [sessionError, setSessionError] = useState("");
+  const [sessionBusy, setSessionBusy] = useState(false);
+
+  async function runSession(dryRun) {
+    setSessionError("");
+    setSessionBusy(true);
+    try {
+      const res = await startSession({ name: sessionName, dry_run: dryRun });
+      if (dryRun) setPreview(res);
+      else {
+        setSessionDone(res);
+        setPreview(null);
+      }
+    } catch (err) {
+      setSessionError(getErrorMessage(err) || err.message);
+    } finally {
+      setSessionBusy(false);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -73,6 +98,11 @@ export default function ManageRoles() {
                 {result.department || "No department"}{result.level ? ` · ${result.level} level` : ""}
               </span>
             )}
+            {result.role === "executive" && (
+              <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem" }}>
+                Scope: every level in {result.department || "their department"}. They can hand the office on themselves.
+              </span>
+            )}
             {result.role === "class_rep" && (
               <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem" }}>
                 Scope: they will only see and manage {result.department || "their department"}
@@ -120,6 +150,51 @@ export default function ManageRoles() {
             {issuing ? "Issuing…" : "Issue reset code"}
           </button>
         </form>
+      </div>
+
+      <div className="ledger-card" style={{ maxWidth: 460, padding: 24, marginTop: 20 }}>
+        <h3 style={{ marginTop: 0 }}>Start a new session</h3>
+        <p style={{ color: "var(--muted)", marginTop: 0 }}>
+          Moves every class up one level, graduates each department's final-year class and closes all open fees.
+          Unpaid mandatory dues on open fees stay owed and follow each student; fees you have already closed are not carried.
+          Payment records are not changed. This cannot be undone, so preview it first.
+        </p>
+        {sessionError && <div className="banner error">{sessionError}</div>}
+        {sessionDone && (
+          <div className="banner success">
+            Session {sessionDone.name} started: {sessionDone.promoted} promoted, {sessionDone.graduated} graduated,{" "}
+            {sessionDone.fees_closed} fees closed.
+          </div>
+        )}
+        <div className="field">
+          <label>Session name</label>
+          <input
+            value={sessionName}
+            onChange={(e) => { setSessionName(e.target.value); setPreview(null); }}
+            placeholder="2026/2027"
+          />
+        </div>
+        {preview && (
+          <div className="banner">
+            This will promote <strong>{preview.promoted}</strong> students, graduate <strong>{preview.graduated}</strong>{" "}
+            and close <strong>{preview.fees_closed}</strong> open fees.{" "}
+            <strong>{preview.debts_carried}</strong> unpaid mandatory dues will follow their students.
+            {preview.skipped_incomplete > 0 && (
+              <span style={{ display: "block", marginTop: 4 }}>
+                {preview.skipped_incomplete} students have no department or level and will be left as they are.
+              </span>
+            )}
+          </div>
+        )}
+        {preview ? (
+          <button className="btn btn-block" disabled={sessionBusy} onClick={() => runSession(false)}>
+            {sessionBusy ? "Starting…" : `Start ${preview.name}`}
+          </button>
+        ) : (
+          <button className="btn-ghost btn-block" disabled={sessionBusy || !sessionName.trim()} onClick={() => runSession(true)}>
+            {sessionBusy ? "Checking…" : "Preview"}
+          </button>
+        )}
       </div>
     </AppShell>
   );

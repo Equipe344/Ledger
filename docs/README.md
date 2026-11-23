@@ -44,7 +44,7 @@ See `API_CONTRACT.md` for exact request/response shapes. Summary:
 | Auth | register, login, logout, me, **roster import (CSV), account claim, claim batches, reset-code / reset-password, set-role** |
 | Departments | list |
 | Contributions | list, create, detail, **PATCH (edit) / DELETE (closes)**, summary, **roster (per-fee payments), manual mark-paid** |
-| Payments | initiate, webhook, verify, history, receipt, **unverified (admin refund-review queue)**, **department NGN bank account (BMONI — `docs/BMONI_SANDBOX_RUNBOOK.md`)** |
+| Payments | initiate, webhook, verify, history, receipt, **unverified (admin refund-review queue)** |
 | Notifications | list, mark read |
 | Analytics | collection-stats, outstanding-students **(built, Phase 3 — rep/admin only; `ANALYTICS_INTEGRATION.md` is the Data/AI consumption guide)** |
 | Ops | **health** (`GET /api/health/` — platform probe, no auth) |
@@ -74,7 +74,7 @@ Current as of the Sept 18 deployment-hardening sprint (full tour in the root
 | Contributions (+ payments bridge, audit rules) | Complete |
 | Payments (+ settlement rules, refund queue, race-proofing, webhook proof archive) | Complete |
 | Notifications | Complete |
-| Tests | 266/266 passing (3 opt-in BMONI sandbox checks skipped by default) |
+| Tests | 254/254 passing |
 | Deployment | `render.yaml` + PostgreSQL + health check ready — needs a real Render deploy + Paystack live webhook URL |
 
 ## Known constraints

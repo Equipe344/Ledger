@@ -15,7 +15,7 @@ export default function Contributions() {
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
-    setContributions(await listContributions());
+    setContributions(await listContributions({ mine: true }));
     setLoading(false);
   }
 
@@ -42,7 +42,7 @@ export default function Contributions() {
                 {c.is_mandatory && <span className="ref-code">· mandatory</span>}
                 {c.category === "merchandise" && <span className="ref-code">· merch</span>}
                 <div className="ref-code">
-                  ₦{Number(c.amount).toLocaleString()} · due {new Date(c.deadline).toLocaleString()}
+                  ₦{Number(c.amount).toLocaleString()} · {c.carried_over ? "owed from a previous session" : `due ${new Date(c.deadline).toLocaleString()}`}
                   {c.target_level ? ` · ${c.target_level} level` : ""}
                   {c.category === "merchandise" && c.available_sizes?.length
                     ? ` · sizes: ${c.available_sizes.join(", ")}`

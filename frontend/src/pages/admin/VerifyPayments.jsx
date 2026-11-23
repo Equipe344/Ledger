@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { getUnverifiedPayments, getPendingPayments, reviewPayment } from "../../api/payments";
-import { getErrorMessage } from "../../api/client";
+import { apiClient, getErrorMessage } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 
 // Two queues, both admin/rep:
@@ -40,6 +40,29 @@ export default function VerifyPayments() {
       setError(getErrorMessage(err));
     } finally {
       setBusyId(null);
+    }
+  }
+
+  // Proofs are private, so a plain link (which cannot send the auth token)
+  // will not work: fetch the file with the token, then show it. The tab is
+  // opened during the click itself — opening it after the download would be
+  // treated as an unrequested popup and blocked.
+  async function openProof(url) {
+    setError("");
+    const tab = window.open("", "_blank");
+    try {
+      const res = await apiClient.get(url, { responseType: "blob" });
+      const fileUrl = URL.createObjectURL(res.data);
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = fileUrl;
+      } else {
+        window.location.assign(fileUrl);
+      }
+      setTimeout(() => URL.revokeObjectURL(fileUrl), 60_000);
+    } catch {
+      if (tab) tab.close();
+      setError("Could not open that proof. It may no longer be available.");
     }
   }
 
@@ -85,7 +108,13 @@ export default function VerifyPayments() {
                   <td>{r.contribution_title}</td>
                   <td>₦{Number(r.amount).toLocaleString()}</td>
                   <td style={{ textTransform: "capitalize" }}>{(r.channel || "").replace("_", " ")}</td>
-                  <td>{r.proof_url ? <a href={r.proof_url} target="_blank" rel="noreferrer">View proof</a> : "—"}</td>
+                  <td>
+                    {r.proof_url ? (
+                      <button className="btn-ghost btn-sm" onClick={() => openProof(r.proof_url)}>
+                        View proof
+                      </button>
+                    ) : "—"}
+                  </td>
                   <td>{new Date(r.created_at).toLocaleDateString()}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     <button className="btn btn-sm" disabled={busyId === r.id} onClick={() => decide(r.id, "approve")}>

@@ -211,6 +211,19 @@ class UserProfileSerializer(serializers.ModelSerializer):
         # wiped to "".
         if value not in dict(User.LEVEL_CHOICES):
             raise serializers.ValidationError(f"Invalid level. Must be one of {[c[0] for c in User.LEVEL_CHOICES]}.")
+        # A class rep's level is the class they control (fees, mark-paid,
+        # reset codes), so a rep cannot move themselves into another class.
+        # Students may still correct their own level (API contract §2).
+        user = self.instance
+        if (
+            user
+            and user.role == User.ROLE_CLASS_REP
+            and user.level
+            and user.level != value
+        ):
+            raise serializers.ValidationError(
+                "A class rep's level is set by an admin."
+            )
         return value
 
     def validate_department_id(self, value):

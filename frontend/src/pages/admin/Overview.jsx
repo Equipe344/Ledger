@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../../components/AppShell";
 import StatusBadge from "../../components/StatusBadge";
-import { listContributions, getContributionSummary, getContributionPayments, markOfflinePayment } from "../../api/contributions";
+import { listContributions, getContributionSummary, getContributionPayments, markOfflinePayment, downloadContributionCsv } from "../../api/contributions";
 import { getErrorMessage } from "../../api/client";
 
 const FILTERS = [
@@ -130,6 +130,16 @@ export default function Overview() {
         </div>
       )}
 
+      {selectedId != null && (
+        <p>
+          <button
+            className="btn-ghost btn-sm"
+            onClick={() => downloadContributionCsv(selectedId).catch((err) => alert(getErrorMessage(err) || err.message))}
+          >
+            Download roster (CSV)
+          </button>
+        </p>
+      )}
       {selectedId != null && <OfflineForm contributionId={selectedId} onRecorded={() => loadRows(selectedId)} />}
 
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>

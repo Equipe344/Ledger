@@ -32,12 +32,14 @@ import { buildPaymentsForContribution, buildSummaryForContribution } from "../mo
  *      Marks an offline (cash/POS/bank) payment. Amount is set by the server.
  */
 
-export async function listContributions() {
+// `mine`: the fees the signed-in user owes and can pay. Reps and executives
+// pass it on their own payment pages; for students it is always the case.
+export async function listContributions({ mine = false } = {}) {
   if (MOCK_MODE) {
     await mockDelay();
     return [...mockContributions];
   }
-  const { data } = await apiClient.get("/contributions/");
+  const { data } = await apiClient.get("/contributions/", { params: mine ? { scope: "mine" } : {} });
   return data;
 }
 
@@ -107,4 +109,18 @@ export async function markOfflinePayment(id, { matric_number, receipt_reference 
   }
   const { data } = await apiClient.post(`/contributions/${id}/payments/`, { matric_number, receipt_reference });
   return data;
+}
+
+// GET /contributions/{id}/export/ — the fee's roster as a CSV file (rep,
+// executive or admin). Fetched with the auth token, then handed to the
+// browser as a download.
+export async function downloadContributionCsv(id) {
+  if (MOCK_MODE) throw new Error("Export is not available in demo mode.");
+  const res = await apiClient.get(`/contributions/${id}/export/`, { responseType: "blob" });
+  const url = URL.createObjectURL(res.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `fee-${id}-roster.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 }

@@ -38,7 +38,11 @@ export function AuthProvider({ children }) {
 
   const isAdmin = user?.role === "admin";
   const isRep = user?.role === "class_rep";
-  const canManage = isAdmin || isRep;
+  // A department executive (e.g. the financial secretary) manages the
+  // whole department; a class rep only their own level.
+  const isExecutive = user?.role === "executive";
+  const holdsOffice = isRep || isExecutive;
+  const canManage = isAdmin || holdsOffice;
 
   // Kept for the Dashboard/AppShell "hi there" fallback — the Django
   // signup flow doesn't collect a full name, so it can be blank.
@@ -46,7 +50,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, login, claim, register, logout, updateProfile, isAdmin, isRep, canManage, displayName }}
+      value={{ user, login, claim, register, logout, updateProfile, isAdmin, isRep, isExecutive, holdsOffice, canManage, displayName }}
     >
       {children}
     </AuthContext.Provider>

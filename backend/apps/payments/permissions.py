@@ -1,5 +1,7 @@
 from rest_framework.permissions import BasePermission
 
+from apps.users.permissions import is_admin  # the one definition of 'admin'
+
 
 class IsAdminUser(BasePermission):
     """
@@ -11,6 +13,5 @@ class IsAdminUser(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
-        if not (user and user.is_authenticated):
-            return False
-        return user.role == 'admin' or user.is_staff or user.is_superuser
+        return bool(user and user.is_authenticated and is_admin(user))
+

@@ -1,0 +1,61 @@
+# Checks every change before it can reach Main. Nothing here deploys:
+# Render and Vercel deploy from Main only after a reviewed merge.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [Main, main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Throwaway values for the test run only — never real credentials.
+      SECRET_KEY: ci-only-not-a-real-secret
+      PAYSTACK_SECRET_KEY: sk_test_ci_placeholder
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt pip-audit
+      - name: Django system check
+        run: python manage.py check
+      - name: Models and migrations agree
+        run: python manage.py makemigrations --check --dry-run
+      - name: Migrations apply from scratch
+        run: python manage.py migrate --noinput
+      - name: Tests
+        run: python manage.py test
+      - name: Known vulnerabilities in dependencies
+        run: pip-audit -r requirements.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: https://example.invalid/api
+      - name: High-severity vulnerabilities in runtime dependencies
+        run: npm audit --omit=dev --audit-level=high

@@ -1,7 +1,7 @@
 # Departmental Payment/Contribution System
 
 **Team Visionary Coders** — NACOS National Build Challenge
-**Status:** all modules complete · **271 backend tests passing** · frontend builds clean
+**Status:** all modules complete · **301 backend tests passing** · frontend builds clean
 
 A full-stack solution: a **Django + DRF API** (`backend/`) and a **React + Vite
 app** (`frontend/`). Departments create contributions (dues, event fees, shirts,
@@ -12,6 +12,10 @@ It also solves the tracking problem *before* anyone pays: admins import the
 department's class list, so the system knows exactly **who owes what**, who has
 paid, and who has not — instead of only counting students who happened to
 register.
+
+> **Deploying for the first time?** Follow [`docs/DEPLOY_GUIDE_BEGINNER.md`](docs/DEPLOY_GUIDE_BEGINNER.md) — step by step, no coding.
+>
+> **Production-readiness status, open blockers and deploy options:** [`docs/ENGINEERING_REPORT.md`](docs/ENGINEERING_REPORT.md)
 
 ## Repository layout
 
@@ -80,6 +84,7 @@ venv\Scripts\activate                # Windows   (mac/linux: source venv/bin/act
 pip install -r requirements.txt
 copy .env.example .env               # then fill in your own Paystack test keys
 python manage.py migrate
+python manage.py createcachetable    # rate-limit counters live in the database
 python manage.py createsuperuser
 python manage.py runserver
 ```
@@ -93,9 +98,6 @@ Admin panel: `http://localhost:8000/admin/`
 | `DEBUG` | Defaults to `False`; set `True` locally only |
 | `PAYSTACK_SECRET_KEY` | Required — the webhook HMAC key; no insecure default |
 | `PAYSTACK_PUBLIC_KEY` | Optional (frontend only; backend never uses it) |
-| `BMONI_API_KEY` | Optional — enables the department NGN bank accounts (`docs/API_CONTRACT.md` §4a). Empty keeps the feature off: those endpoints answer `503` rather than invent an account |
-| `BMONI_BASE_URL` | Defaults to the BMONI **sandbox**; set the production host explicitly |
-| `BMONI_WEBHOOK_SECRET` | BMONI's webhook signing secret. Unset makes the webhook fail closed (`503`) — an unsigned delivery is never trusted |
 | `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` | Needed once deployed |
 
 ### Frontend
@@ -118,6 +120,7 @@ the app stays in mock mode. Production build: `npm run build` → `dist/`.
 |---|---|
 | `student` | See department fees, pay online, view own history/receipts, read own notifications, edit own profile, claim an imported account |
 | `class_rep` | Everything a student can, **plus** create fees, view rosters, mark students paid for **offline** payments, issue reset codes — all **scoped to their own department AND level** |
+| `executive` | A department officer such as the financial secretary: everything a class rep can do, across **every level of their own department**. Still owes dues; can hand the office on |
 | `admin` | Everything, plus mark-paid for anyone, promote users to rep, import rosters, review refunds. **Exempt from paying dues.** |
 
 > **Note:** a class rep **is a student and still owes dues.** Only admins/staff
@@ -204,6 +207,8 @@ checklist: [`docs/FRONTEND_LINKING.md`](docs/FRONTEND_LINKING.md).
 | `POST` | `/auth/reset-code/` | rep/admin | Issue a one-time student reset code |
 | `POST` | `/auth/reset-password/` | public | Redeem the code and set a new password |
 | `POST` | `/auth/users/{id}/set-role/` | admin | Promote/demote a student ↔ class rep |
+| `POST` | `/auth/handover/` | rep/executive | Hand your office to another student (`matric_number`, your `password`) |
+| `GET`/`POST` | `/auth/sessions/` | admin | List / start an academic session: promote every class, graduate the final year, close open fees (`name`, optional `dry_run`) |
 | `GET` | `/auth/users/?search=` | admin | Look up a user by matric/username/name (resolves the id for set-role) |
 
 ### Contributions (`/api/contributions/`)
@@ -217,6 +222,7 @@ checklist: [`docs/FRONTEND_LINKING.md`](docs/FRONTEND_LINKING.md).
 | `GET` | `/{id}/summary/` | any | Expected / collected / outstanding counts |
 | `GET` | `/{id}/payments/` | rep/admin | Roster: who paid, how, and who recorded it |
 | `POST` | `/{id}/payments/` | rep/admin | Mark a student paid **offline** (requires `receipt_reference`) |
+| `GET` | `/{id}/export/` | rep/executive/admin | Download the fee roster as a CSV for the treasurer: who paid, how, when, reference, who recorded it |
 
 ### Payments (`/api/payments/`)
 | Method | Path | Who | Purpose |
@@ -229,9 +235,7 @@ checklist: [`docs/FRONTEND_LINKING.md`](docs/FRONTEND_LINKING.md).
 | `POST` | `/submit/` | student | Submit an offline (bank transfer / POS / cash) payment with proof — lands `pending` (§3b) |
 | `GET` | `/pending/` | rep/admin | Queue of self-reported offline payments awaiting review — rep sees own department only (§3b) |
 | `POST` | `/{id}/review/` | rep/admin | Approve (`success`) or reject (`failed`) a self-report — credit uses the same settlement guard (§3b) |
-| `GET` | `/departments/{id}/bank-account/` | department members | **The department's own NGN account** (BMONI) to pay by bank transfer; `provisioned: false` when there isn't one yet |
-| `POST` | `/departments/{id}/bank-account/` | rep/admin | Create that account through BMONI — idempotent, so pressing it twice returns the same account |
-| `POST` | `/bmoni/webhook/` | BMONI | HMAC-SHA256-signed BMONI callback. Deliveries are archived (deduped on BMONI's event id); crediting a deposit is Phase 2 |
+| `GET` | `/{id}/proof/` | owner, or rep/admin in scope | The uploaded proof file — private, served through the API (never a public media URL) |
 | `GET` | `/unverified/` | admin | **Refund-review queue**: payments flagged `pending_review` (wrong amount, duplicate charge, unverifiable). Read-only — approving/refusing a refund happens in the Django admin |
 
 ### Notifications (`/api/notifications/`)
@@ -422,13 +426,13 @@ reconciled in `API_CONTRACT.md` first, never patched silently.
 
 ```bash
 cd backend
-python manage.py test            # full suite — 266 tests
+python manage.py test            # full suite — 301 tests
 python manage.py check           # system check
 python manage.py makemigrations --check --dry-run   # model drift check
 python db_backup.py              # snapshot db.sqlite3 -> backups/ (downloadable)
 ```
 
-**266 tests** (3 of them opt-in BMONI sandbox checks, skipped by default), split by concern:
+**301 tests**, split by concern:
 
 | App | Focus |
 |---|---|

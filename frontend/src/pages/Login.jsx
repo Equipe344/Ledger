@@ -102,7 +102,7 @@ export default function Login() {
     try {
       if (mode === "login") {
         const user = await login(form.identifier, form.password);
-        navigate(user.role === "admin" || user.role === "class_rep" ? "/admin" : "/dashboard");
+        navigate(["admin", "class_rep", "executive"].includes(user.role) ? "/admin" : "/dashboard");
       } else {
         if (noDepartments) {
           setError("No departments are set up yet. Ask an administrator to create one.");

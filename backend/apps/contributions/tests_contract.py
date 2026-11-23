@@ -53,7 +53,7 @@ class ContributionContractTests(APITestCase):
         self.assertEqual(
             set(item.keys()),
             {'id', 'title', 'description', 'amount', 'deadline', 'is_mandatory',
-             'target_level', 'is_closed', 'has_paid', 'department',
+             'target_level', 'is_closed', 'carried_over', 'online_amount', 'has_paid', 'department',
              'department_id', 'created_at'},
         )
         # Money rule: amounts are strings, never floats.
@@ -77,7 +77,7 @@ class ContributionContractTests(APITestCase):
         self.assertEqual(
             set(response.data.keys()),
             {'id', 'title', 'description', 'amount', 'deadline', 'is_mandatory',
-             'target_level', 'is_closed', 'has_paid', 'created_at',
+             'target_level', 'is_closed', 'carried_over', 'online_amount', 'has_paid', 'created_at',
              'department', 'department_id'},
         )
         self.assertEqual(response.data['amount'], '5000.00')

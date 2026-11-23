@@ -276,3 +276,19 @@ export async function setUserRoleByMatric(matric_number, role) {
   const { data } = await apiClient.post(`/auth/users/${match.id}/set-role/`, { role });
   return data.user || data;
 }
+
+// POST /auth/handover/ — a class rep or executive passes their office to
+// another student, confirming with their own password. Real backend only.
+export async function handOverOffice({ matric_number, password }) {
+  if (MOCK_MODE) throw new Error("Handover is not available in demo mode.");
+  const { data } = await apiClient.post("/auth/handover/", { matric_number, password });
+  return data;
+}
+
+// POST /auth/sessions/ (admin) — start a new academic session. With
+// dry_run the server only reports what would change.
+export async function startSession({ name, dry_run }) {
+  if (MOCK_MODE) throw new Error("Starting a session is not available in demo mode.");
+  const { data } = await apiClient.post("/auth/sessions/", { name, dry_run });
+  return data;
+}

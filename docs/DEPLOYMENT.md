@@ -21,8 +21,6 @@ The repo ships `render.yaml`, a one-click Blueprint.
    `https://your-frontend.vercel.app` (exact origin, no trailing slash, no `*`).
 5. Deploy, then confirm `https://<service>.onrender.com/api/health/` returns OK.
 
-Leave `BMONI_API_KEY` empty — the feature stays off (its endpoints answer 503
-rather than inventing an account). See `docs/BMONI_SANDBOX_RUNBOOK.md`.
 
 `SECRET_KEY`, `DEBUG=False`, `ALLOWED_HOSTS`, `NUM_PROXIES=1` and `DATABASE_URL`
 are already handled by the Blueprint — do not set them by hand.
@@ -106,8 +104,6 @@ redeploy the backend if it was already live.
 | `CORS_ALLOWED_ORIGINS` | local Vite origins | exact deployed frontend origin |
 | `PAYSTACK_SECRET_KEY` | test key | test key (required) |
 | `PAYSTACK_PUBLIC_KEY` | test key | test key |
-| `BMONI_API_KEY` | empty (off) | empty (off) for the demo |
-| `BMONI_WEBHOOK_SECRET` | empty | empty |
 
 `SECRET_KEY` and `PAYSTACK_SECRET_KEY` have no defaults — the app refuses to
 boot without them, by design.
